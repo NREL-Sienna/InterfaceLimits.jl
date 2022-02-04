@@ -9,8 +9,8 @@ export find_interface_limits
 export find_interfaces
 
 function find_interfaces(sys)
-    interfaces = Dict{Set,Vector{Branch}}();
-    for br in get_components(Branch, sys)
+    interfaces = Dict{Set,Vector{ACBranch}}();
+    for br in get_components(ACBranch, sys)
         from_area = get_area(get_from(get_arc(br)))
         to_area = get_area(get_to(get_arc(br)))
         if from_area != to_area
@@ -27,13 +27,15 @@ end
 
 function find_interface_limits(sys)
     # calculate the PTDF
+    @info "Building PTDF"
     ptdf = PTDF(sys)
 
     # Build a JuMP Model
+    @info "Building interface limit optimization model"
     m = Model(Ipopt.Optimizer)
 
     interfaces = find_interfaces(sys)
-    branches = get_components(Branch, sys) # could filter for monitored lines here
+    branches = get_components(ACBranch, sys) # could filter for monitored lines here
 
     inames = join.(keys(interfaces), "_")
     # free power injectin variables
@@ -73,6 +75,14 @@ function find_interface_limits(sys)
         :transfer_limit => interface_lims.data,
     )
 
+    # add capacities to df
+    interface_cap = DataFrame(
+        :interface => join.(keys(interfaces), "_"),
+        :sum_capacity => sum.([get_rate.(br) for br in values(interfaces)]),
+    );
+    df = leftjoin(df, interface_cap, on = :interface);
+
+    @info "Interface limits calculated" df
     return df
 end
 

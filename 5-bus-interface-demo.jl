@@ -25,12 +25,4 @@ set_units_base_system!(sys, "natural_units")
 # solve problem
 interface_lims = find_interface_limits(sys);
 
-# compare solution with capacities
-interfaces = find_interfaces(sys);
-
-interface_cap = DataFrame(
-    :interface => join.(keys(interfaces), "_"),
-    :sum_capacity => sum.([get_rate.(br) for br in values(interfaces)]),
-);
-df = leftjoin(interface_lims, interface_cap, on = :interface);
-@info("Interface Limits Calculated", df)
+@info("Interface Limits Calculated", interface_lims)
