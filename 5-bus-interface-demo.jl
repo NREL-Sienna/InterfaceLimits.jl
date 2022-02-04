@@ -23,6 +23,4 @@ end
 set_units_base_system!(sys, "natural_units")
 
 # solve problem
-interface_lims = find_interface_limits(sys);
-
-@info("Interface Limits Calculated", interface_lims)
+interface_lims = find_interface_limits(sys)

@@ -1,12 +1,24 @@
-# interface-limits
+# InterfaceLimits.jl
 
-A sandbox for developing models/methods to determine inter-regional transfer limits
-
+A basic Julia module that constructs a JuMP optimization model to find the maximum active
+power transfer limit between interconnected areas in a power system. The module depends on
+[PowerSystems.jl](https://github.com/nrel-siip/powersystems.jl) and accepts data in the form
+of a `System`. Interface limits are determined for every pair of `Area`s that are directly
+connected with an `ACBranch`.
 ## installation
 
 ```julia
 julia> ]
 (tmp) pkg> add https://github.nrel.gov/SIIP/InterfaceLimits.jl
+```
+
+## usage
+
+```julia
+using PowerSystems
+using InterfaceLimits
+sys = System("matpower.m")
+limits = find_interface_limits(sys)
 ```
 
 ## demo
