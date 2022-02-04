@@ -1,7 +1,6 @@
+using InterfaceLimits
+using PowerSystems
 using DataFrames
-
-include("interface-limits.jl")
-
 # use a simple 5-bus system
 sys = System("5_bus.json")
 

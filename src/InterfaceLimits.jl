@@ -1,8 +1,11 @@
+module InterfaceLimits
+
 using PowerSystems
 using JuMP
 using Ipopt
 using DataFrames
 
+export find_interface_limits
 
 function find_interface_limits(sys)
     # calculate the PTDF
@@ -76,3 +79,5 @@ function find_interface_limits(sys)
 
     return leftjoin(min_df, max_df, on = :interface)
 end
+
+end # module
