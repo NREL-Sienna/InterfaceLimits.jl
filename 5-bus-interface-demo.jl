@@ -2,7 +2,7 @@ using InterfaceLimits
 using PowerSystems
 using DataFrames
 # use a simple 5-bus system
-sys = System("5_bus.json")
+sys = System(joinpath(dirname(dirname(pathof(InterfaceLimits))), "5_bus.json"));
 
 # add areas
 remove_component!(sys, first(get_components(Area, sys)))
@@ -19,24 +19,14 @@ for b in get_components(Bus, sys)
         set_area!(b, get_component(Area, sys, "three"))
     end
 end
+# set units to MW
+set_units_base_system!(sys, "natural_units")
 
 # solve problem
 interface_lims = find_interface_limits(sys);
 
 # compare solution with capacities
-interfaces = Dict{Set,Vector{Branch}}();
-for br in get_components(Branch, sys)
-    from_area = get_area(get_from(get_arc(br)))
-    to_area = get_area(get_to(get_arc(br)))
-    if from_area != to_area
-        key = Set(get_name.([from_area, to_area]))
-        if haskey(interfaces, key)
-            push!(interfaces[key], br)
-        else
-            interfaces[key] = [br]
-        end
-    end
-end
+interfaces = find_interfaces(sys);
 
 interface_cap = DataFrame(
     :interface => join.(keys(interfaces), "_"),
