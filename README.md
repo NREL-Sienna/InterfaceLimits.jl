@@ -5,8 +5,8 @@ A sandbox for developing models/methods to determine inter-regional transfer lim
 ## installation
 
 ```julia
-using Pkg
-Pkg.add("https://github.nrel.gov/SIIP/InterfaceLimits.jl")
+julia> ]
+(tmp) pkg> add https://github.nrel.gov/SIIP/InterfaceLimits.jl
 ```
 
 ## demo
