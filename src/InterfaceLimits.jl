@@ -49,8 +49,8 @@ function find_interface_limits(sys)
         iname = join(ikey, "_")
         for br in branches
             name = get_name(br)
-            @constraint(m, F[iname, name] >= get_rate(br) * -1)
-            @constraint(m, F[iname, name] <= get_rate(br))
+            @constraint(m,  get_rate(br) >= F[iname, name] >= get_rate(br) * -1)
+
             @constraint(
                 m,
                 F[iname, name] == sum([
@@ -59,7 +59,7 @@ function find_interface_limits(sys)
             )
         end
 
-        @constraint(m, I[join(ikey, "_")] == sum(F[iname, get_name(br)] for br in interface))
+        @constraint(m, I[iname] == sum(F[iname, get_name(br)] for br in interface))
     end
 
     # make max objective

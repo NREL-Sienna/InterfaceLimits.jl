@@ -1,6 +1,5 @@
 using InterfaceLimits
 using PowerSystems
-using DataFrames
 # use a simple 5-bus system
 sys = System(joinpath(dirname(dirname(pathof(InterfaceLimits))), "5_bus.json"));
 
@@ -22,5 +21,5 @@ end
 # set units to MW
 set_units_base_system!(sys, "natural_units")
 
-# solve problem
+# calculate interfafce limits
 interface_lims = find_interface_limits(sys)
