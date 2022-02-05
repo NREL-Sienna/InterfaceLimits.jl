@@ -9,7 +9,7 @@ export find_interface_limits
 export find_interfaces
 
 function find_interfaces(sys)
-    interfaces = Dict{Set,Vector{ACBranch}}();
+    interfaces = Dict{Set,Vector{ACBranch}}()
     for br in get_components(ACBranch, sys)
         from_area = get_area(get_from(get_arc(br)))
         to_area = get_area(get_to(get_arc(br)))
@@ -25,36 +25,51 @@ function find_interfaces(sys)
     return interfaces
 end
 
-function find_interface_limits(sys)
+function find_interface_limits(sys, solver = Ipopt.Optimizer)
     # calculate the PTDF
     @info "Building PTDF"
     ptdf = PTDF(sys)
 
     # Build a JuMP Model
     @info "Building interface limit optimization model"
-    m = Model(Ipopt.Optimizer)
+    m = Model(solver)
 
     interfaces = find_interfaces(sys)
-    branches = get_components(ACBranch, sys) # could filter for monitored lines here
+    branches = get_components(ACBranch, sys, get_available) # could filter for monitored lines here
 
     inames = join.(keys(interfaces), "_")
-    # free power injectin variables
-    @variable(m, P[inames, get_name.(get_components(Bus, sys))])
+    # fixed power injection variables
+    @variable(m, P[inames, get_name.(get_components(Bus, sys))] == 0.0)
     # create flow variables for branches
     @variable(m, F[inames, get_name.(branches)])
     # create variables and interfaces
     @variable(m, I[inames])
 
+    gen_buses = get_bus.(get_components(Generator, sys, get_available))
+    load_buses = get_bus.(get_components(Generator, sys, get_available))
+
     for (ikey, interface) in interfaces
         iname = join(ikey, "_")
+        for b in get_components(Bus, sys)
+            if b ∈ union(gen_buses, load_buses)
+                unfix(P[iname, get_name(b)])
+                if b ∈ setdiff(gen_buses, load_buses) # only gens connected
+                    set_lower_bound(P[iname, get_name(b)], 0.0)
+                elseif b ∈ setdiff(load_buses, gen_buses) # only loads connected
+                    set_lower_bound(P[iname, get_name(b)], 0.0)
+                end
+            end
+        end
+
         for br in branches
             name = get_name(br)
-            @constraint(m,  get_rate(br) >= F[iname, name] >= get_rate(br) * -1)
+            @constraint(m, get_rate(br) >= F[iname, name] >= get_rate(br) * -1)
 
             @constraint(
                 m,
                 F[iname, name] == sum([
-                    ptdf[name, get_number(b)] * P[iname, get_name(b)] for b in get_components(Bus, sys)
+                    ptdf[name, get_number(b)] * P[iname, get_name(b)] for
+                    b in get_components(Bus, sys)
                 ])
             )
         end
@@ -79,8 +94,8 @@ function find_interface_limits(sys)
     interface_cap = DataFrame(
         :interface => join.(keys(interfaces), "_"),
         :sum_capacity => sum.([get_rate.(br) for br in values(interfaces)]),
-    );
-    df = leftjoin(df, interface_cap, on = :interface);
+    )
+    df = leftjoin(df, interface_cap, on = :interface)
 
     @info "Interface limits calculated" df
     return df
