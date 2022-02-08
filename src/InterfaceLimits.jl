@@ -8,9 +8,9 @@ using DataFrames
 export find_interface_limits
 export find_interfaces
 
-function find_interfaces(sys)
+function find_interfaces(sys, branch_filter = x->get_available(x))
     interfaces = Dict{Set,Vector{ACBranch}}()
-    for br in get_components(ACBranch, sys)
+    for br in get_components(ACBranch, sys, branch_filter)
         from_area = get_area(get_from(get_arc(br)))
         to_area = get_area(get_to(get_arc(br)))
         if from_area != to_area
@@ -25,7 +25,7 @@ function find_interfaces(sys)
     return interfaces
 end
 
-function find_interface_limits(sys, solver = Ipopt.Optimizer)
+function find_interface_limits(sys, solver = Ipopt.Optimizer, branch_filter = x->get_available(x))
     # calculate the PTDF
     @info "Building PTDF"
     ptdf = PTDF(sys)
@@ -34,8 +34,8 @@ function find_interface_limits(sys, solver = Ipopt.Optimizer)
     @info "Building interface limit optimization model"
     m = Model(solver)
 
-    interfaces = find_interfaces(sys)
-    branches = get_components(ACBranch, sys, get_available) # could filter for monitored lines here
+    interfaces = find_interfaces(sys, branch_filter)
+    branches = get_components(ACBranch, sys, branch_filter) # could filter for monitored lines here
 
     inames = join.(keys(interfaces), "_")
     # create flow variables for branches
