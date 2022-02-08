@@ -25,7 +25,7 @@ limits = find_interface_limits(sys)
 
 ```julia
 julia> using InterfaceLimits
-julia> include(joinpath(dirname(dirname(pathof(InterfaceLimits))),"5-bus-interface-demo.jl"))
+julia> include(joinpath(dirname(dirname(pathof(InterfaceLimits))), "examples", "5_bus", "5-bus-interface-demo.jl"))
 
 [ Info: Unit System changed to UnitSystem.NATURAL_UNITS = 2
 This is Ipopt version 3.14.4, running with linear solver MUMPS 5.4.1.
