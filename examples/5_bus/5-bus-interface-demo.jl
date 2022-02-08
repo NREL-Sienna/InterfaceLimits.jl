@@ -1,7 +1,9 @@
 using InterfaceLimits
 using PowerSystems
 # use a simple 5-bus system
-sys = System(joinpath(dirname(dirname(pathof(InterfaceLimits))), "examples", "5_bus", "5_bus.json"));
+sys = System(
+    joinpath(dirname(dirname(pathof(InterfaceLimits))), "examples", "5_bus", "5_bus.json"),
+);
 
 # add areas
 remove_component!(sys, first(get_components(Area, sys)))

@@ -8,7 +8,7 @@ using DataFrames
 export find_interface_limits
 export find_interfaces
 
-function find_interfaces(sys, branch_filter = x->get_available(x))
+function find_interfaces(sys, branch_filter = x -> get_available(x))
     interfaces = Dict{Set,Vector{ACBranch}}()
     for br in get_components(ACBranch, sys, branch_filter)
         from_area = get_area(get_from(get_arc(br)))
@@ -25,7 +25,11 @@ function find_interfaces(sys, branch_filter = x->get_available(x))
     return interfaces
 end
 
-function find_interface_limits(sys, solver = Ipopt.Optimizer, branch_filter = x->get_available(x))
+function find_interface_limits(
+    sys,
+    solver = Ipopt.Optimizer,
+    branch_filter = x -> get_available(x),
+)
     # calculate the PTDF
     @info "Building PTDF"
     ptdf = PTDF(sys)
@@ -45,7 +49,7 @@ function find_interface_limits(sys, solver = Ipopt.Optimizer, branch_filter = x-
 
     gen_buses = get_bus.(get_components(Generator, sys, get_available))
     load_buses = get_bus.(get_components(Generator, sys, get_available))
-    injection_buses = union(gen_buses,load_buses)
+    injection_buses = union(gen_buses, load_buses)
 
     @variable(m, P[inames, get_name.(injection_buses)])
 
