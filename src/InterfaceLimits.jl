@@ -55,7 +55,7 @@ function find_interface_limits(
 
     for (ikey, interface) in interfaces
         iname = join(ikey, "_")
-        for b in union(gen_buses, load_buses)
+        for b in injection_buses
             if b ∈ setdiff(gen_buses, load_buses) # only gens connected
                 @constraint(m, P[iname, get_name(b)] >= 0.0)
             elseif b ∈ setdiff(load_buses, gen_buses) # only loads connected
