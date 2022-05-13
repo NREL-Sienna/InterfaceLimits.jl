@@ -4,8 +4,11 @@ using PowerSystems
 using JuMP
 using Ipopt
 using DataFrames
+import PowerModelsInterface
+const PMI = PowerModelsInterface
 
 export find_interface_limits
+export find_sparse_interface_limits
 export find_interfaces
 
 function find_interfaces(sys, branch_filter = x -> get_available(x))
@@ -25,14 +28,33 @@ function find_interfaces(sys, branch_filter = x -> get_available(x))
     return interfaces
 end
 
+# need to remove DC lines and inactive components to create a "basic_network" in PowerModels
+function clean_sys!(sys)
+    for c in get_components(Device, sys, !get_available)
+        remove_component!(sys, c)
+    end
+    for c in get_components(HVDCLine, sys)
+        remove_component!(sys, c)
+    end
+end
+
 function find_interface_limits(
-    sys,
+    sys;
     solver = Ipopt.Optimizer,
     branch_filter = x -> get_available(x),
+    ptdf = nothing
 )
-    # calculate the PTDF
-    @info "Building PTDF"
-    ptdf = PTDF(sys)
+    if isnothing(ptdf)
+        @info "calculating interface limits using PowerModels sparse PTDF technique"
+        clean_sys!(sys)
+        pm_data = PMI.PM.make_basic_network(PMI.get_pm_data(sys))
+        pm_bus_map = Dict(value["name"] => parse(Int64, ix) for (ix, value) in pm_data["bus"])
+        pm_branch_map = Dict(get_name(value) => parse(Int64, ix) for (ix, value) in PMI.get_pm_map(sys, ACBranch))
+    elseif ptdf isa PowerSystems.PowerNetworkMatrix
+        @info "calculating interface limits using PowerSystems PTDF"
+        buses = get_components(Bus, sys)
+        pm_bus_map = Dict(zip(get_name.(buses), 1:length(buses)))
+    end
 
     # Build a JuMP Model
     @info "Building interface limit optimization model"
@@ -65,12 +87,13 @@ function find_interface_limits(
 
         for br in branches
             name = get_name(br)
+            ptdf_row = isnothing(ptdf) ? PMI.PM.calc_basic_ptdf_row(pm_data, pm_branch_map[name]) : ptdf[name,:]
             @constraint(m, get_rate(br) >= F[iname, name] >= get_rate(br) * -1)
 
             @constraint(
                 m,
                 F[iname, name] == sum([
-                    ptdf[name, get_number(b)] * P[iname, get_name(b)] for
+                    ptdf_row[pm_bus_map[get_name(b)]] * P[iname, get_name(b)] for
                     b in injection_buses
                 ])
             )
