@@ -2,7 +2,7 @@
 
 using PowerSystems
 using InterfaceLimits
-using Xpress #Use a good solver for this
+using HiGHS #Use a good solver for this
 
 #Download the data from https://electricgrids.engr.tamu.edu/
 
@@ -20,4 +20,4 @@ bf = x -> get_available(x) &&
         get_base_voltage(get_from(get_arc(x))) >= v &&
         get_base_voltage(get_to(get_arc(x))) >= v
 
-interface_lims = find_interface_limits(sys, Xpress.Optimizer, bf)
+interface_lims = find_interface_limits(sys, HiGHS.Optimizer, branch_filter = bf)
