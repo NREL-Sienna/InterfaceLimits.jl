@@ -30,12 +30,8 @@ end
 
 # need to remove DC lines and inactive components to create a "basic_network" in PowerModels
 function clean_sys!(sys)
-    for c in get_components(Device, sys, !get_available)
-        remove_component!(sys, c)
-    end
-    for c in get_components(HVDCLine, sys)
-        remove_component!(sys, c)
-    end
+    remove_components!(!get_available, sys, Device)
+    remove_components!(!get_available, sys, HVDCLine)
 end
 
 function find_interface_limits(
@@ -61,7 +57,7 @@ function find_interface_limits(
     m = Model(solver)
 
     interfaces = find_interfaces(sys, branch_filter)
-    branches = get_components(ACBranch, sys, branch_filter) # could filter for monitored lines here
+    branches = get_components(branch_filter, ACBranch, sys) # could filter for monitored lines here
 
     inames = join.(keys(interfaces), "_")
     # create flow variables for branches
@@ -69,8 +65,8 @@ function find_interface_limits(
     # create variables and interfaces
     @variable(m, I[inames])
 
-    gen_buses = get_bus.(get_components(Generator, sys, get_available))
-    load_buses = get_bus.(get_components(Generator, sys, get_available))
+    gen_buses = get_bus.(get_components(get_available, Generator, sys))
+    load_buses = get_bus.(get_components(get_available, Generator, sys))
     injection_buses = union(gen_buses, load_buses)
 
     @variable(m, P[inames, get_name.(injection_buses)])
