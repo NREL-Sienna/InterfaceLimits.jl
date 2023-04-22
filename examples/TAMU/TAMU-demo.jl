@@ -16,8 +16,10 @@ set_units_base_system!(sys, "natural_units") # set units to MW
 # calculate interfafce limits
 v = 160.0 #set voltage threshold
 # make a branch filter function to select available branches with endpoints above the v theshold
-bf = x -> get_available(x) &&
-        get_base_voltage(get_from(get_arc(x))) >= v &&
-        get_base_voltage(get_to(get_arc(x))) >= v
+bf =
+    x ->
+        get_available(x) &&
+            get_base_voltage(get_from(get_arc(x))) >= v &&
+            get_base_voltage(get_to(get_arc(x))) >= v
 
 interface_lims = find_interface_limits(sys, HiGHS.Optimizer, branch_filter = bf)

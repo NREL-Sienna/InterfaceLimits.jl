@@ -25,7 +25,7 @@ function find_interfaces(sys, branch_filter = x -> get_available(x))
             end
         end
     end
-    return Dict(zip([k[1]=>k[2] for k in collect.(keys(interfaces))], values(interfaces)))
+    return Dict(zip([k[1] => k[2] for k in collect.(keys(interfaces))], values(interfaces)))
 end
 
 # need to remove DC lines and inactive components to create a "basic_network" in PowerModels
@@ -40,7 +40,7 @@ function find_interface_limits(
     branch_filter = x -> get_available(x),
     ptdf = PTDF(sys),
     lodf = LODF(sys),
-    security = false
+    security = false,
 )
 
     buses = get_components(Bus, sys)
@@ -80,12 +80,13 @@ function find_interface_limits(
 
             for br in branches
                 name = get_name(br)
-                ptdf_row = ptdf[name,:]
+                ptdf_row = ptdf[name, :]
                 @constraint(m, get_rate(br) >= F[iname, name] >= get_rate(br) * -1)
 
                 @constraint(
                     m,
-                    F[iname, name] == sum([
+                    F[iname, name] ==
+                    sum([
                         ptdf_row[pm_bus_map[get_name(b)]] * P[iname, get_name(b)] for
                         b in injection_buses
                     ]) * forward
@@ -95,10 +96,14 @@ function find_interface_limits(
                 if security
                     for cbr in branches
                         cname = get_name(cbr)
-                        @constraint(m, get_rate(br) >= CF[iname, name, cname] >= get_rate(br) * -1)
                         @constraint(
                             m,
-                            CF[iname, name, cname] == F[iname, name] + lodf[name, cname] * F[iname, cname]
+                            get_rate(br) >= CF[iname, name, cname] >= get_rate(br) * -1
+                        )
+                        @constraint(
+                            m,
+                            CF[iname, name, cname] ==
+                            F[iname, name] + lodf[name, cname] * F[iname, cname]
                         )
                     end
                 end
@@ -125,7 +130,7 @@ function find_interface_limits(
     # add capacities to df
     interface_cap = DataFrame(
         :interface => inames,
-        :sum_capacity => repeat(sum.([get_rate.(br) for br in values(interfaces)]),2),
+        :sum_capacity => repeat(sum.([get_rate.(br) for br in values(interfaces)]), 2),
     )
     df = leftjoin(df, interface_cap, on = :interface)
 
