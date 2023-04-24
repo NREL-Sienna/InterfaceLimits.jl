@@ -11,7 +11,13 @@ set_units_base_system!(sys, "natural_units")
 
 # calculate interfafce limits
 @info "calculating n-0 interface limits"
-interface_lims = find_interface_limits(sys, HiGHS.Optimizer)
+@time interface_lims = find_interface_limits(sys, HiGHS.Optimizer);
+
+@info "calculating n-0 interface limits with single problem"
+@time interface_lims = find_monolithic_interface_limits(sys, HiGHS.Optimizer);
 
 @info "calculating n-1 interface limits"
 interface_lims = find_interface_limits(sys, HiGHS.Optimizer, security = true)
+
+@info "calculating n-1 interface limits with single problem"
+interface_lims = find_monolithic_interface_limits(sys, HiGHS.Optimizer, security = true)
