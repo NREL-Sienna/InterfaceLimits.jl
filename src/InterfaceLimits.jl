@@ -59,14 +59,11 @@ function find_interface_limits(
     solver;
     branch_filter = x -> get_available(x),
     ptdf = VirtualPTDF(sys),
-    lodf = LODF(sys),
+    lodf = nothing,
     security = false, # n-1 security
     hops = 1, # neighboring areas to include
     ptdf_threshold = 1e-6, #rounding threshold for including ptdf
 )
-
-    buses = get_components(Bus, sys)
-    pm_bus_map = Dict(zip(get_name.(buses), 1:length(buses)))
 
     interfaces = find_interfaces(sys, branch_filter)
     interface_neighbors = find_neighbor_interfaces(interfaces, hops)
@@ -74,7 +71,9 @@ function find_interface_limits(
 
     results_dfs = []
 
+    ik = 0
     for (interface_key, interface) in interfaces
+        ik+=1
         neighbors = interface_neighbors[interface_key]
         in_branches = filter(
             x -> (
@@ -87,7 +86,7 @@ function find_interface_limits(
         #inames = join.(vcat(collect(keys(interfaces)), reverse.(keys(interfaces))), "_")
         inames = join.(vcat(interface_key, reverse(interface_key)), "_")
         # Build a JuMP Model
-        @info "Building interface limit optimization model" interface_key
+        @info " $ik/$(length(interfaces)) Building interface limit optimization model " interface_key
         m = Model(solver)
         # create flow variables for branches
         @variable(m, F[inames, get_name.(in_branches)])
@@ -120,19 +119,18 @@ function find_interface_limits(
 
             for br in in_branches
                 name = get_name(br)
-                ptdf_row = ptdf[name, :]
                 @constraint(m, get_rate(br) >= F[iname, name] >= get_rate(br) * -1)
 
+                ptdf_expr = [
+                    ptdf[name, get_number(b)] * P[iname, get_name(b)] for
+                    b in injection_buses if
+                    abs(ptdf[name, get_number(b)]) > ptdf_threshold
+                ]
+                push!(ptdf_expr, 0.0)
                 @constraint(
                     m,
-                    F[iname, name] ==
-                    sum([
-                        ptdf_row[pm_bus_map[get_name(b)]] * P[iname, get_name(b)] for
-                        b in injection_buses if
-                        abs(ptdf_row[pm_bus_map[get_name(b)]]) > ptdf_threshold
-                    ]) * forward
+                    F[iname, name] ==sum(ptdf_expr) * forward
                 )
-
                 # OutageFlowX = PreOutageFlowX + LODFx,y* PreOutageFlowY
                 if security
                     for cbr in in_branches
@@ -190,10 +188,6 @@ function find_monolithic_interface_limits(
     security = false,
     ptdf_threshold = 1e-6, #rounding threshold for including ptdf
 )
-
-    buses = get_components(Bus, sys)
-    pm_bus_map = Dict(zip(get_name.(buses), 1:length(buses)))
-
     # Build a JuMP Model
     @info "Building interface limit optimization model"
     m = Model(solver)
@@ -228,16 +222,15 @@ function find_monolithic_interface_limits(
 
             for br in branches
                 name = get_name(br)
-                ptdf_row = ptdf[name, :]
                 @constraint(m, get_rate(br) >= F[iname, name] >= get_rate(br) * -1)
 
                 @constraint(
                     m,
                     F[iname, name] ==
                     sum([
-                        ptdf_row[pm_bus_map[get_name(b)]] * P[iname, get_name(b)] for
+                        ptdf[name, get_number(b)] * P[iname, get_name(b)] for
                         b in injection_buses if
-                        abs(ptdf_row[pm_bus_map[get_name(b)]]) > ptdf_threshold
+                        abs(ptdf[name, get_number(b)]) > ptdf_threshold
                     ]) * forward
                 )
 
