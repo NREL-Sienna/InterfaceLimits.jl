@@ -135,6 +135,9 @@ end
 function ensure_injector!(inj_buses, neighbors, bustype,  sys)
     !isempty(inj_buses) && return # only add an injector if set is empty
     buses = get_components(x->(get_name(get_area(x)) ∈ neighbors) && (get_bustype(x) == bustype), Bus, sys)
+    if isempty(buses)
+        @warn("No no neighboring $bustype buses")
+    end
     firstbus = first(sortperm(get_base_voltage.(buses), rev = true))
     push!(inj_buses, collect(buses)[firstbus])
 end
