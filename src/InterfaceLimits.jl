@@ -132,6 +132,13 @@ function add_constraints!(m, vars, interface_key, interface, injection_buses, ge
     end
 end
 
+function ensure_injector!(inj_buses, neighbors, bustype,  sys)
+    !isempty(inj_buses) && return # only add an injector if set is empty
+    buses = get_components(x->(get_name(get_area(x)) ∈ neighbors) && (get_bustype(x) == bustype), Bus, sys)
+    firstbus = first(sortperm(get_base_voltage.(buses), rev = true))
+    push!(inj_buses, collect(buses)[firstbus])
+end
+
 function find_interface_limits(
     sys,
     solver,
@@ -162,10 +169,12 @@ function find_interface_limits(
         x -> get_name(get_area(x)) ∈ neighbors,
         Set(get_bus.(get_components(get_available, Generator, sys))),
     )
+    ensure_injector!(gen_buses, neighbors, BusTypes.PV, sys)
     load_buses = filter(
         x -> get_name(get_area(x)) ∈ neighbors,
         Set(get_bus.(get_components(get_available, ElectricLoad, sys))),
     )
+    ensure_injector!(load_buses, neighbors, BusTypes.PQ, sys)
     injection_buses = union(gen_buses, load_buses)
 
     # Build a JuMP Model
