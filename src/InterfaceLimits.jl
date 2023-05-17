@@ -4,8 +4,6 @@ using PowerSystems
 using JuMP
 using DataFrames
 using PowerNetworkMatrices
-#import PowerModelsInterface
-#const PMI = PowerModelsInterface
 
 export find_interface_limits
 export find_sparse_interface_limits
@@ -134,12 +132,11 @@ end
 
 function ensure_injector!(inj_buses, neighbors, bustype,  sys)
     !isempty(inj_buses) && return # only add an injector if set is empty
-    buses = get_components(x->(get_name(get_area(x)) ∈ neighbors) && (get_bustype(x) == bustype), Bus, sys)
+    inj_buses = get_components(x->(get_name(get_area(x)) ∈ neighbors) && (get_bustype(x) == bustype), Bus, sys)
     if isempty(buses)
         @warn("No no neighboring $bustype buses")
     end
-    firstbus = first(sortperm(get_base_voltage.(buses), rev = true))
-    push!(inj_buses, collect(buses)[firstbus])
+    return inj_buses
 end
 
 function find_interface_limits(
@@ -166,22 +163,23 @@ function find_interface_limits(
         collect(branches),
     )
 
+    interface_areas = get_components(x->get_name(x) ∈ interface_key, Area, sys)
     #inames = join.(vcat(collect(keys(interfaces)), reverse.(keys(interfaces))), "_")
     inames = join.(vcat(interface_key, reverse(interface_key)), "_")
     gen_buses = filter(
         x -> get_name(get_area(x)) ∈ neighbors,
-        Set(get_bus.(get_components(get_available, Generator, sys))),
+        Set(get_bus.(get_components(Generator, sys))),
     )
     ensure_injector!(gen_buses, neighbors, BusTypes.PV, sys)
     load_buses = filter(
         x -> get_name(get_area(x)) ∈ neighbors,
-        Set(get_bus.(get_components(get_available, ElectricLoad, sys))),
+        Set(get_bus.(get_components(ElectricLoad, sys))),
     )
     ensure_injector!(load_buses, neighbors, BusTypes.PQ, sys)
     injection_buses = union(gen_buses, load_buses)
 
     # Build a JuMP Model
-    m = Model(solver)
+    m = direct_model(solver)
     vars = add_variables!(m, inames, in_branches, injection_buses, security)
     add_constraints!(m, vars, interface_key, interface, injection_buses, gen_buses, load_buses, in_branches, ptdf, ptdf_threshold, security, lodf)
     # make max objective
@@ -245,7 +243,7 @@ function find_monolithic_interface_limits(
 )
     # Build a JuMP Model
     @info "Building interface limit optimization model"
-    m = Model(solver)
+    m = direct_model(solver)
 
     interfaces = find_interfaces(sys, branch_filter)
     in_branches = get_components(branch_filter, ACBranch, sys) # could filter for monitored lines here
