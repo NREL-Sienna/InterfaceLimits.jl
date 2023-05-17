@@ -10,8 +10,9 @@ export find_sparse_interface_limits
 export find_interfaces
 export find_neighbor_interfaces
 export find_monolithic_interface_limits
+export optimizer_with_attributes
 
-function find_interfaces(sys, branch_filter = x -> get_available(x))
+function find_interfaces(sys::System, branch_filter = x -> get_available(x))
     interfaces = Dict{Set,Vector{ACBranch}}()
     for br in get_components(branch_filter, ACBranch, sys)
         from_area = get_area(get_from(get_arc(br)))
@@ -55,12 +56,6 @@ function find_neighbor_interfaces(
     return neighbors
 end
 
-# need to remove DC lines and inactive components to create a "basic_network" in PowerModels
-function clean_sys!(sys)
-    remove_components!(!get_available, sys, Device)
-    remove_components!(!get_available, sys, HVDCLine)
-end
-
 function add_variables!(m, inames, in_branches, injection_buses, security)
     # create flow variables for branches
     @variable(m, F[inames, get_name.(in_branches)])
@@ -75,7 +70,19 @@ function add_variables!(m, inames, in_branches, injection_buses, security)
     return vars
 end
 
-function add_constraints!(m, vars, interface_key, interface, injection_buses, gen_buses, load_buses, in_branches, ptdf, ptdf_threshold, security, lodf)
+function add_constraints!(
+    m::Model,
+    vars,
+    interface_key,
+    interface,
+    injection_buses,
+    gen_buses,
+    load_buses,
+    in_branches,
+    ptdf,
+    security,
+    lodf,
+)
     F = vars["flow"]
     I = vars["interface"]
     P = vars["injection"]
@@ -100,14 +107,10 @@ function add_constraints!(m, vars, interface_key, interface, injection_buses, ge
 
             ptdf_expr = [
                 ptdf[name, get_number(b)] * P[iname, get_name(b)] for
-                b in injection_buses if
-                abs(ptdf[name, get_number(b)]) > ptdf_threshold
+                b in injection_buses
             ]
             push!(ptdf_expr, 0.0)
-            @constraint(
-                m,
-                F[iname, name] ==sum(ptdf_expr) * forward
-            )
+            @constraint(m, F[iname, name] == sum(ptdf_expr) * forward)
             # OutageFlowX = PreOutageFlowX + LODFx,y* PreOutageFlowY
             if security
                 isnothing(lodf) && error("lodf must be defined")
@@ -130,9 +133,13 @@ function add_constraints!(m, vars, interface_key, interface, injection_buses, ge
     end
 end
 
-function ensure_injector!(inj_buses, neighbors, bustype,  sys)
+function ensure_injector!(inj_buses, neighbors, bustype, sys)
     !isempty(inj_buses) && return # only add an injector if set is empty
-    inj_buses = get_components(x->(get_name(get_area(x)) ∈ neighbors) && (get_bustype(x) == bustype), Bus, sys)
+    inj_buses = get_components(
+        x -> (get_name(get_area(x)) ∈ neighbors) && (get_bustype(x) == bustype),
+        Bus,
+        sys,
+    )
     if isempty(buses)
         @warn("No no neighboring $bustype buses")
     end
@@ -140,8 +147,8 @@ function ensure_injector!(inj_buses, neighbors, bustype,  sys)
 end
 
 function find_interface_limits(
-    sys,
-    solver,
+    sys::System,
+    solver::JuMP.MOI.OptimizerWithAttributes,
     interface_key,
     interface,
     interfaces;
@@ -150,7 +157,6 @@ function find_interface_limits(
     lodf = nothing,
     security = false, # n-1 security
     hops = 1, # neighboring areas to include
-    ptdf_threshold = 1e-6, #rounding threshold for including ptdf
 )
     interface_neighbors = find_neighbor_interfaces(interfaces, hops)
     neighbors = interface_neighbors[interface_key]
@@ -163,8 +169,6 @@ function find_interface_limits(
         collect(branches),
     )
 
-    interface_areas = get_components(x->get_name(x) ∈ interface_key, Area, sys)
-    #inames = join.(vcat(collect(keys(interfaces)), reverse.(keys(interfaces))), "_")
     inames = join.(vcat(interface_key, reverse(interface_key)), "_")
     gen_buses = filter(
         x -> get_name(get_area(x)) ∈ neighbors,
@@ -181,7 +185,19 @@ function find_interface_limits(
     # Build a JuMP Model
     m = direct_model(solver)
     vars = add_variables!(m, inames, in_branches, injection_buses, security)
-    add_constraints!(m, vars, interface_key, interface, injection_buses, gen_buses, load_buses, in_branches, ptdf, ptdf_threshold, security, lodf)
+    add_constraints!(
+        m,
+        vars,
+        interface_key,
+        interface,
+        injection_buses,
+        gen_buses,
+        load_buses,
+        in_branches,
+        ptdf,
+        security,
+        lodf,
+    )
     # make max objective
     @objective(m, Max, sum(vars["interface"]))
 
@@ -205,14 +221,13 @@ function find_interface_limits(
 end
 
 function find_interface_limits(
-    sys,
-    solver;
+    sys::System,
+    solver::JuMP.MOI.OptimizerWithAttributes;
     branch_filter = x -> get_available(x),
     ptdf = VirtualPTDF(sys),
     lodf = nothing,
     security = false, # n-1 security
     hops = 1, # neighboring areas to include
-    ptdf_threshold = 1e-6, #rounding threshold for including ptdf
 )
 
     interfaces = find_interfaces(sys, branch_filter)
@@ -220,9 +235,20 @@ function find_interface_limits(
 
     ik = 0
     for (interface_key, interface) in interfaces
-        ik+=1
+        ik += 1
         @info " $ik/$(length(interfaces)) Building interface limit optimization model " interface_key
-        df = find_interface_limits(sys, solver, interface_key, interface, interfaces, branch_filter = branch_filter, ptdf = ptdf, lodf = lodf, security = security, hops = hops, ptdf_threshold = ptdf_threshold)
+        df = find_interface_limits(
+            sys,
+            solver,
+            interface_key,
+            interface,
+            interfaces,
+            branch_filter = branch_filter,
+            ptdf = ptdf,
+            lodf = lodf,
+            security = security,
+            hops = hops,
+        )
         push!(results_dfs, df)
     end
 
@@ -233,13 +259,12 @@ function find_interface_limits(
 end
 
 function find_monolithic_interface_limits(
-    sys,
-    solver;
+    sys::System,
+    solver::JuMP.MOI.OptimizerWithAttributes;
     branch_filter = x -> get_available(x),
     ptdf = VirtualPTDF(sys),
     lodf = nothing,
     security = false,
-    ptdf_threshold = 1e-6, #rounding threshold for including ptdf
 )
     # Build a JuMP Model
     @info "Building interface limit optimization model"
@@ -254,7 +279,19 @@ function find_monolithic_interface_limits(
     inames = join.(vcat(collect(keys(interfaces)), reverse.(keys(interfaces))), "_")
     vars = add_variables!(m, inames, in_branches, injection_buses, security)
     for (interface_key, interface) in interfaces
-        add_constraints!(m, vars, interface_key, interface, injection_buses, gen_buses, load_buses, in_branches, ptdf, ptdf_threshold, security, lodf)
+        add_constraints!(
+            m,
+            vars,
+            interface_key,
+            interface,
+            injection_buses,
+            gen_buses,
+            load_buses,
+            in_branches,
+            ptdf,
+            security,
+            lodf,
+        )
     end
 
     # make max objective
