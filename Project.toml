@@ -12,6 +12,6 @@ PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
 [compat]
 DataFrames = "1"
 JuMP = "1"
-PowerNetworkMatrices = "0.7.1"
-PowerSystems = "2.1"
+PowerNetworkMatrices = "^0.7.1"
+PowerSystems = "^2.2"
 julia = "1"
