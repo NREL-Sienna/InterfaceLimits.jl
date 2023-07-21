@@ -12,6 +12,8 @@ export find_neighbor_interfaces
 export find_monolithic_interface_limits
 export optimizer_with_attributes
 
+const LOAD_TYPES = Union{InterruptiblePowerLoad, StaticLoad}
+
 function find_interfaces(sys::System, branch_filter = x -> get_available(x))
     interfaces = Dict{Set,Vector{ACBranch}}()
     for br in get_components(branch_filter, ACBranch, sys)
@@ -56,12 +58,13 @@ function find_neighbor_interfaces(
     return neighbors
 end
 
-function add_variables!(m, inames, in_branches, injection_buses, security)
+function add_variables!(m, inames, in_branches, gen_buses, load_buses, security)
     # create flow variables for branches
     @variable(m, F[inames, get_name.(in_branches)])
     @variable(m, I[inames])
-    @variable(m, P[inames, get_name.(injection_buses)])
-    vars = Dict("flow" => F, "interface" => I, "injection" => P)
+    @variable(m, P[inames, get_name.(union(gen_buses, load_buses))])
+    @variable(m, L, upper_bound = 0.0)
+    vars = Dict("flow" => F, "interface" => I, "injection" => P, "load" => L)
     if security
         @variable(m, CF[inames, get_name.(in_branches), get_name.(in_branches)])
         vars["cont_flow"] = CF
@@ -75,17 +78,18 @@ function add_constraints!(
     vars,
     interface_key,
     interface,
-    injection_buses,
     gen_buses,
     load_buses,
     in_branches,
     ptdf,
     security,
     lodf,
+    ldf,
 )
     F = vars["flow"]
     I = vars["interface"]
     P = vars["injection"]
+    L = vars["load"]
     if security
         CF = vars["cont_flow"]
     end
@@ -93,12 +97,12 @@ function add_constraints!(
     for ikey in [interface_key, reverse(interface_key)]
         forward = ikey == interface_key ? 1 : -1
         iname = join(ikey, "_")
-        for b in injection_buses
-            if b ∈ setdiff(gen_buses, load_buses) # only gens connected
-                @constraint(m, P[iname, get_name(b)] >= 0.0)
-            elseif b ∈ setdiff(load_buses, gen_buses) # only loads connected
-                @constraint(m, P[iname, get_name(b)] <= 0.0)
-            end
+
+        for b in gen_buses # only gens connected
+            @constraint(m, P[iname, get_name(b)] >= 0.0)
+        end
+        for b in load_buses # only loads connected
+            @constraint(m, P[iname, get_name(b)] == ldf[get_name(b)] * L)
         end
 
         for br in in_branches
@@ -107,7 +111,7 @@ function add_constraints!(
 
             ptdf_expr = [
                 ptdf[name, get_number(b)] * P[iname, get_name(b)] for
-                b in injection_buses
+                b in union(gen_buses, load_buses)
             ]
             push!(ptdf_expr, 0.0)
             @constraint(m, F[iname, name] == sum(ptdf_expr) * forward)
@@ -146,6 +150,30 @@ function ensure_injector!(inj_buses, neighbors, bustype, sys)
     return inj_buses
 end
 
+function find_gen_buses(sys, neighbors)
+    gen_buses = filter(
+        x -> get_name(get_area(x)) ∈ neighbors,
+        Set(get_bus.(get_components(Generator, sys))),
+    )
+    ensure_injector!(gen_buses, neighbors, BusTypes.PV, sys)
+    return gen_buses
+end
+
+function find_load_buses(sys, neighbors)
+    load_buses = filter(
+        x -> get_name(get_area(x)) ∈ neighbors,
+        Set(get_bus.(get_components(LOAD_TYPES, sys))),
+    )
+    ensure_injector!(load_buses, neighbors, BusTypes.PQ, sys)
+    return load_buses
+end
+
+function find_ldfs(sys, load_buses)
+    total_load = sum(get_max_active_power.(get_components(get_available, LOAD_TYPES, sys)))
+    ldf = Dict([get_name(l) => sum(get_max_active_power.(get_components(x->get_bus(x) == l, LOAD_TYPES, sys)))/total_load for l in load_buses])
+    return ldf
+end
+
 function find_interface_limits(
     sys::System,
     solver::JuMP.MOI.OptimizerWithAttributes,
@@ -170,33 +198,26 @@ function find_interface_limits(
     )
 
     inames = join.(vcat(interface_key, reverse(interface_key)), "_")
-    gen_buses = filter(
-        x -> get_name(get_area(x)) ∈ neighbors,
-        Set(get_bus.(get_components(Generator, sys))),
-    )
-    ensure_injector!(gen_buses, neighbors, BusTypes.PV, sys)
-    load_buses = filter(
-        x -> get_name(get_area(x)) ∈ neighbors,
-        Set(get_bus.(get_components(ElectricLoad, sys))),
-    )
-    ensure_injector!(load_buses, neighbors, BusTypes.PQ, sys)
-    injection_buses = union(gen_buses, load_buses)
+
+    gen_buses = find_gen_buses(sys, neighbors)
+    load_buses = find_load_buses(sys, neighbors)
+    ldf = find_ldfs(sys, load_buses)
 
     # Build a JuMP Model
     m = direct_model(solver)
-    vars = add_variables!(m, inames, in_branches, injection_buses, security)
+    vars = add_variables!(m, inames, in_branches, gen_buses, load_buses, security)
     add_constraints!(
         m,
         vars,
         interface_key,
         interface,
-        injection_buses,
         gen_buses,
         load_buses,
         in_branches,
         ptdf,
         security,
         lodf,
+        ldf
     )
     # make max objective
     @objective(m, Max, sum(vars["interface"]))
@@ -273,24 +294,24 @@ function find_monolithic_interface_limits(
     interfaces = find_interfaces(sys, branch_filter)
     in_branches = get_components(branch_filter, ACBranch, sys) # could filter for monitored lines here
     gen_buses = Set(get_bus.(get_components(get_available, Generator, sys)))
-    load_buses = Set(get_bus.(get_components(get_available, ElectricLoad, sys)))
-    injection_buses = union(gen_buses, load_buses)
+    load_buses = Set(get_bus.(get_components(get_available, LOAD_TYPES, sys)))
+    ldf = find_ldfs(sys, load_buses)
 
     inames = join.(vcat(collect(keys(interfaces)), reverse.(keys(interfaces))), "_")
-    vars = add_variables!(m, inames, in_branches, injection_buses, security)
+    vars = add_variables!(m, inames, in_branches, gen_buses, load_buses, security)
     for (interface_key, interface) in interfaces
         add_constraints!(
             m,
             vars,
             interface_key,
             interface,
-            injection_buses,
             gen_buses,
             load_buses,
             in_branches,
             ptdf,
             security,
             lodf,
+            ldf
         )
     end
 
