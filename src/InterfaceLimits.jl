@@ -12,7 +12,7 @@ export find_neighbor_interfaces
 export find_monolithic_interface_limits
 export optimizer_with_attributes
 
-const LOAD_TYPES = Union{InterruptiblePowerLoad, StaticLoad}
+const LOAD_TYPES = Union{InterruptiblePowerLoad,StaticLoad}
 
 function find_interfaces(sys::System, branch_filter = x -> get_available(x))
     interfaces = Dict{Set,Vector{ACBranch}}()
@@ -58,12 +58,20 @@ function find_neighbor_interfaces(
     return neighbors
 end
 
-function add_variables!(m, inames, in_branches, gen_buses, load_buses, security, enforce_load_distribution)
+function add_variables!(
+    m,
+    inames,
+    in_branches,
+    gen_buses,
+    load_buses,
+    security,
+    enforce_load_distribution,
+)
     # create flow variables for branches
     @variable(m, F[inames, get_name.(in_branches)])
     @variable(m, I[inames])
     @variable(m, P[inames, get_name.(union(gen_buses, load_buses))])
-    vars = Dict{String, Any}("flow" => F, "interface" => I, "injection" => P)
+    vars = Dict{String,Any}("flow" => F, "interface" => I, "injection" => P)
     if enforce_load_distribution
         @variable(m, L, upper_bound = 0.0)
         vars["load"] = L
@@ -89,7 +97,7 @@ function add_constraints!(
     lodf,
     sys,
     enforce_gen_limits,
-    enforce_load_distribution
+    enforce_load_distribution,
 )
     F = vars["flow"]
     I = vars["interface"]
@@ -109,7 +117,15 @@ function add_constraints!(
 
         for b in gen_buses # only gens connected
             if enforce_gen_limits
-                max_gen = sum(get_max_active_power.(get_components(x -> get_available(x) && get_bus(x) == b, Generator, sys)))
+                max_gen = sum(
+                    get_max_active_power.(
+                        get_components(
+                            x -> get_available(x) && get_bus(x) == b,
+                            Generator,
+                            sys,
+                        )
+                    ),
+                )
                 @constraint(m, P[iname, get_name(b)] <= max_gen)
             end
             @constraint(m, P[iname, get_name(b)] >= 0.0)
@@ -187,7 +203,14 @@ end
 
 function find_ldfs(sys, load_buses)
     total_load = sum(get_max_active_power.(get_components(get_available, LOAD_TYPES, sys)))
-    ldf = Dict([get_name(l) => sum(get_max_active_power.(get_components(x->get_bus(x) == l, LOAD_TYPES, sys)))/total_load for l in load_buses])
+    ldf = Dict([
+        get_name(l) =>
+            sum(
+                get_max_active_power.(
+                    get_components(x -> get_bus(x) == l, LOAD_TYPES, sys)
+                ),
+            ) / total_load for l in load_buses
+    ])
     return ldf
 end
 
@@ -239,7 +262,15 @@ function find_interface_limits(
 
     # Build a JuMP Model
     m = direct_model(solver)
-    vars = add_variables!(m, inames, in_branches, gen_buses, load_buses, security, enforce_load_distribution)
+    vars = add_variables!(
+        m,
+        inames,
+        in_branches,
+        gen_buses,
+        load_buses,
+        security,
+        enforce_load_distribution,
+    )
     add_constraints!(
         m,
         vars,
@@ -253,7 +284,7 @@ function find_interface_limits(
         lodf,
         sys,
         enforce_gen_limits,
-        enforce_load_distribution
+        enforce_load_distribution,
     )
     # make max objective
     @objective(m, Max, sum(vars["interface"]))
@@ -327,7 +358,7 @@ function find_monolithic_interface_limits(
     lodf = nothing,
     security = false,
     enforce_load_distribution = false,
-    enforce_gen_limits = false
+    enforce_gen_limits = false,
 )
     # Build a JuMP Model
     @info "Building interface limit optimization model"
@@ -339,7 +370,15 @@ function find_monolithic_interface_limits(
     load_buses = Set(get_bus.(get_components(get_available, LOAD_TYPES, sys)))
 
     inames = join.(vcat(collect(keys(interfaces)), reverse.(keys(interfaces))), "_")
-    vars = add_variables!(m, inames, in_branches, gen_buses, load_buses, security, enforce_load_distribution)
+    vars = add_variables!(
+        m,
+        inames,
+        in_branches,
+        gen_buses,
+        load_buses,
+        security,
+        enforce_load_distribution,
+    )
     for (interface_key, interface) in interfaces
         add_constraints!(
             m,
@@ -354,7 +393,7 @@ function find_monolithic_interface_limits(
             lodf,
             sys,
             enforce_gen_limits,
-            enforce_load_distribution
+            enforce_load_distribution,
         )
     end
 
