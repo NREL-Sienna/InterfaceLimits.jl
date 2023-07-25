@@ -58,13 +58,16 @@ function find_neighbor_interfaces(
     return neighbors
 end
 
-function add_variables!(m, inames, in_branches, gen_buses, load_buses, security)
+function add_variables!(m, inames, in_branches, gen_buses, load_buses, security, enforce_load_distribution)
     # create flow variables for branches
     @variable(m, F[inames, get_name.(in_branches)])
     @variable(m, I[inames])
     @variable(m, P[inames, get_name.(union(gen_buses, load_buses))])
-    @variable(m, L, upper_bound = 0.0)
-    vars = Dict("flow" => F, "interface" => I, "injection" => P, "load" => L)
+    vars = Dict{String, Any}("flow" => F, "interface" => I, "injection" => P)
+    if enforce_load_distribution
+        @variable(m, L, upper_bound = 0.0)
+        vars["load"] = L
+    end
     if security
         @variable(m, CF[inames, get_name.(in_branches), get_name.(in_branches)])
         vars["cont_flow"] = CF
@@ -84,12 +87,18 @@ function add_constraints!(
     ptdf,
     security,
     lodf,
-    ldf,
+    sys,
+    enforce_gen_limits,
+    enforce_load_distribution
 )
     F = vars["flow"]
     I = vars["interface"]
     P = vars["injection"]
-    L = vars["load"]
+    if enforce_load_distribution
+        L = vars["load"]
+        ldf = find_ldfs(sys, load_buses)
+    end
+
     if security
         CF = vars["cont_flow"]
     end
@@ -99,10 +108,18 @@ function add_constraints!(
         iname = join(ikey, "_")
 
         for b in gen_buses # only gens connected
+            if enforce_gen_limits
+                max_gen = sum(get_max_active_power.(get_components(x -> get_available(x) && get_bus(x) == b, Generator, sys)))
+                @constraint(m, P[iname, get_name(b)] <= max_gen)
+            end
             @constraint(m, P[iname, get_name(b)] >= 0.0)
         end
         for b in load_buses # only loads connected
-            @constraint(m, P[iname, get_name(b)] == ldf[get_name(b)] * L)
+            if enforce_load_distribution
+                @constraint(m, P[iname, get_name(b)] == ldf[get_name(b)] * L)
+            else
+                @constraint(m, P[iname, get_name(b)] <= 0.0)
+            end
         end
 
         for br in in_branches
@@ -174,6 +191,22 @@ function find_ldfs(sys, load_buses)
     return ldf
 end
 
+"""
+find the interface limits (between `Area`s) for a specified `System`
+
+Args:
+- `sys::System`
+- `solver::OptimizerWithAttributes`
+
+Supported kwargs:
+- `branch_filter::function` : function to filter branches considered for interface limit calculation
+- `ptdf::VirtualPTDF` : PTDF matrix
+- `lodf::VirtualLODF` : LODF matrix
+- `security::Bool = False` : include n-1 transmission security constraints in calculation
+- `enforce_gen_limits::Bool = False` : enforce generator max power limits in calculation
+- `enforce_load_distribution::Bool = False` : enforce constant load distribution factor in calculation
+- `hops::Int = 1` : number of hops to travel to include neighboring regions in calculation
+"""
 function find_interface_limits(
     sys::System,
     solver::JuMP.MOI.OptimizerWithAttributes,
@@ -184,6 +217,8 @@ function find_interface_limits(
     ptdf = VirtualPTDF(sys),
     lodf = nothing,
     security = false, # n-1 security
+    enforce_gen_limits = false,
+    enforce_load_distribution = false,
     hops = 1, # neighboring areas to include
 )
     interface_neighbors = find_neighbor_interfaces(interfaces, hops)
@@ -201,11 +236,10 @@ function find_interface_limits(
 
     gen_buses = find_gen_buses(sys, neighbors)
     load_buses = find_load_buses(sys, neighbors)
-    ldf = find_ldfs(sys, load_buses)
 
     # Build a JuMP Model
     m = direct_model(solver)
-    vars = add_variables!(m, inames, in_branches, gen_buses, load_buses, security)
+    vars = add_variables!(m, inames, in_branches, gen_buses, load_buses, security, enforce_load_distribution)
     add_constraints!(
         m,
         vars,
@@ -217,7 +251,9 @@ function find_interface_limits(
         ptdf,
         security,
         lodf,
-        ldf
+        sys,
+        enforce_gen_limits,
+        enforce_load_distribution
     )
     # make max objective
     @objective(m, Max, sum(vars["interface"]))
@@ -248,6 +284,8 @@ function find_interface_limits(
     ptdf = VirtualPTDF(sys),
     lodf = nothing,
     security = false, # n-1 security
+    enforce_gen_limits = false,
+    enforce_load_distribution = false,
     hops = 1, # neighboring areas to include
 )
 
@@ -268,6 +306,8 @@ function find_interface_limits(
             ptdf = ptdf,
             lodf = lodf,
             security = security,
+            enforce_gen_limits = enforce_gen_limits,
+            enforce_load_distribution = enforce_load_distribution,
             hops = hops,
         )
         push!(results_dfs, df)
@@ -286,6 +326,8 @@ function find_monolithic_interface_limits(
     ptdf = VirtualPTDF(sys),
     lodf = nothing,
     security = false,
+    enforce_load_distribution = false,
+    enforce_gen_limits = false
 )
     # Build a JuMP Model
     @info "Building interface limit optimization model"
@@ -295,10 +337,9 @@ function find_monolithic_interface_limits(
     in_branches = get_components(branch_filter, ACBranch, sys) # could filter for monitored lines here
     gen_buses = Set(get_bus.(get_components(get_available, Generator, sys)))
     load_buses = Set(get_bus.(get_components(get_available, LOAD_TYPES, sys)))
-    ldf = find_ldfs(sys, load_buses)
 
     inames = join.(vcat(collect(keys(interfaces)), reverse.(keys(interfaces))), "_")
-    vars = add_variables!(m, inames, in_branches, gen_buses, load_buses, security)
+    vars = add_variables!(m, inames, in_branches, gen_buses, load_buses, security, enforce_load_distribution)
     for (interface_key, interface) in interfaces
         add_constraints!(
             m,
@@ -311,7 +352,9 @@ function find_monolithic_interface_limits(
             ptdf,
             security,
             lodf,
-            ldf
+            sys,
+            enforce_gen_limits,
+            enforce_load_distribution
         )
     end
 
