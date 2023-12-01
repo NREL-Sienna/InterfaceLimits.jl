@@ -3,6 +3,7 @@
 using PowerSystems
 using InterfaceLimits
 using HiGHS #Use a good solver for this
+solver = optimizer_with_attributes(HiGHS.Optimizer)
 
 #Download the data from https://electricgrids.engr.tamu.edu/
 
@@ -22,6 +23,7 @@ bf =
             get_base_voltage(get_from(get_arc(x))) >= v &&
             get_base_voltage(get_to(get_arc(x))) >= v
 
-@time interface_lims = find_interface_limits(sys, HiGHS.Optimizer, branch_filter = bf)
+@time interface_lims = find_interface_limits(sys, solver, branch_filter = bf)
 
-@time monolithic_interface_lims = find_monolithic_interface_limits(sys, HiGHS.Optimizer, branch_filter = bf)
+@time monolithic_interface_lims =
+    find_monolithic_interface_limits(sys, solver, branch_filter = bf)
