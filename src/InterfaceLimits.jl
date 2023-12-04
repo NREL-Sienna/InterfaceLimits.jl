@@ -43,7 +43,7 @@ function find_neighbor_lines(
     # filter for all lines with to and/or from bus in the interface key areas
     line_community = Set(filter(
                     (
-                    x -> get_name(get_area(get_from(get_arc(x)))) ∈ community ||
+                    x -> get_name(get_area(get_from(get_arc(x)))) ∈ community &&
                     get_name(get_area(get_to(get_arc(x)))) ∈ community
                     ),
                     in_branches
@@ -220,7 +220,16 @@ end
 
 function ensure_injector!(inj_buses, bus_neighbors, bustype, sys)
     !isempty(inj_buses) && return # only add an injector if set is empty
+    #Line hops:
     inj_buses = get_components(x -> (x ∈ bus_neighbors) && (get_bustype(x) == bustype), Bus, sys)
+
+    #Region hops:
+    #inj_buses = get_components(
+    #    x -> (get_name(get_area(x)) ∈ bus_neighbors) && (get_bustype(x) == bustype),
+    #    Bus,
+    #    sys,
+    #)
+
     if isempty(buses)
         @warn("No no neighboring $bustype buses")
     end
@@ -228,19 +237,35 @@ function ensure_injector!(inj_buses, bus_neighbors, bustype, sys)
 end
 
 function find_gen_buses(sys, bus_neighbors)
+    # Line hops:
     gen_buses = filter(
         x -> x ∈ bus_neighbors,
         Set(get_bus.(get_components(Generator, sys))),
     )
+
+    # Region hops:
+    #gen_buses = filter(
+    #    x -> get_name(get_area(x)) ∈ bus_neighbors,
+    #    Set(get_bus.(get_components(Generator, sys))),
+    #)
+
     ensure_injector!(gen_buses, bus_neighbors, ACBusTypes.PV, sys)
     return gen_buses
 end
 
 function find_load_buses(sys, bus_neighbors)
+    # Line hops:
     load_buses = filter(
         x -> x ∈ bus_neighbors,
         Set(get_bus.(get_components(LOAD_TYPES, sys))),
     )
+    
+    # Region hops:
+    #load_buses = filter(
+    #    x -> get_name(get_area(x)) ∈ bus_neighbors,
+    #    Set(get_bus.(get_components(LOAD_TYPES, sys))),
+    #)
+
     ensure_injector!(load_buses, bus_neighbors, ACBusTypes.PQ, sys)
     return load_buses
 end
@@ -276,15 +301,12 @@ function find_interface_limits(
     security = false, # n-1 security
     enforce_gen_limits = false,
     enforce_load_distribution = false,
-    hops = 3, # neighboring areas to include
+    hops = 1, # neighboring areas to include
 )
-    # interface_neighbors = find_neighbor_interfaces(interfaces, hops)
-    # neighbors = interface_neighbors[interface_key]
-    lines, buses = find_neighbor_lines(sys, interfaces, branch_filter, hops)
-    line_neighbors = lines[interface_key]
-    bus_neighbors = buses[interface_key]
-    # branches = get_components(branch_filter, ACBranch, sys) # could filter for monitored lines here
-    in_branches = line_neighbors
+    # Region hops:
+    #interface_neighbors = find_neighbor_interfaces(interfaces, hops)
+    #neighbors = interface_neighbors[interface_key]
+    #branches = get_components(branch_filter, ACBranch, sys) # could filter for monitored lines here
     #in_branches = filter(
     #    x -> (
     #        get_name(get_area(get_from(get_arc(x)))) ∈ neighbors ||
@@ -292,11 +314,18 @@ function find_interface_limits(
     #    ),
     #    collect(branches),
     #)
+    #gen_buses = find_gen_buses(sys, neighbors)
+    #load_buses = find_load_buses(sys, neighbors)
 
-    inames = join.(vcat(interface_key, reverse(interface_key)), "_")
-
+    # Line hops:
+    lines, buses = find_neighbor_lines(sys, interfaces, branch_filter, hops)
+    line_neighbors = lines[interface_key]
+    bus_neighbors = buses[interface_key]
+    in_branches = line_neighbors
     gen_buses = find_gen_buses(sys, bus_neighbors)
     load_buses = find_load_buses(sys, bus_neighbors)
+
+    inames = join.(vcat(interface_key, reverse(interface_key)), "_")
 
     # Build a JuMP Model
     m = direct_model(solver)
@@ -355,7 +384,7 @@ function find_interface_limits(
     security = false, # n-1 security
     enforce_gen_limits = false,
     enforce_load_distribution = false,
-    hops = 3, # neighboring areas to include
+    hops = 1, # neighboring areas to include
 )
 
     interfaces = find_interfaces(sys, branch_filter)
