@@ -230,7 +230,7 @@ function ensure_injector!(inj_buses, bus_neighbors, bustype, sys)
     #    sys,
     #)
 
-    if isempty(buses)
+    if isempty(inj_buses)
         @warn("No no neighboring $bustype buses")
     end
     return inj_buses
@@ -318,10 +318,9 @@ function find_interface_limits(
     #load_buses = find_load_buses(sys, neighbors)
 
     # Line hops:
-    lines, buses = find_neighbor_lines(sys, interfaces, branch_filter, hops)
-    line_neighbors = lines[interface_key]
-    bus_neighbors = buses[interface_key]
-    in_branches = line_neighbors
+    no_bf = x -> get_available(x)
+    line_neighbors, bus_neighbors = find_neighbor_lines(sys, interface_key, no_bf, hops)
+    in_branches = Set(filter(branch_filter,line_neighbors)) # Filter branches after collecting all within n hops
     gen_buses = find_gen_buses(sys, bus_neighbors)
     load_buses = find_load_buses(sys, bus_neighbors)
 
