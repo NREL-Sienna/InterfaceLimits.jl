@@ -328,6 +328,7 @@ function find_interface_limits(
 
     # Build a JuMP Model
     m = direct_model(solver)
+    # set_attribute(m, "BarHomogeneous", 1)
     vars = add_variables!(
         m,
         inames,
