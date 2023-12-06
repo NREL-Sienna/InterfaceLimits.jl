@@ -121,6 +121,7 @@ function add_variables!(
         vars["load"] = L
     end
     if security
+        isnothing(c_branches) && error("c_branches must be defined")
         @variable(m, CF[inames, get_name.(c_branches), get_name.(c_branches)])
         vars["cont_flow"] = CF
     end
@@ -197,7 +198,6 @@ function add_constraints!(
             # OutageFlowX = PreOutageFlowX + LODFx,y* PreOutageFlowY
             if security
                 isnothing(lodf) && error("lodf must be defined")
-                isnothing(c_branches) && error("c_branches must be defined")
                 if br in c_branches
                     for cbr in c_branches
                         cname = get_name(cbr)
