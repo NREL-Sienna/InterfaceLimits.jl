@@ -108,6 +108,7 @@ function add_variables!(
     gen_buses,
     load_buses,
     security,
+    c_branches, #must not be nothing if security = true 
     enforce_load_distribution,
 )
     # create flow variables for branches
@@ -120,7 +121,7 @@ function add_variables!(
         vars["load"] = L
     end
     if security
-        @variable(m, CF[inames, get_name.(in_branches), get_name.(in_branches)])
+        @variable(m, CF[inames, get_name.(c_branches), get_name.(c_branches)])
         vars["cont_flow"] = CF
     end
 
@@ -138,6 +139,7 @@ function add_constraints!(
     ptdf,
     security,
     lodf,
+    c_branches, #must not be nothing if security = true
     sys,
     enforce_gen_limits,
     enforce_load_distribution,
@@ -195,21 +197,24 @@ function add_constraints!(
             # OutageFlowX = PreOutageFlowX + LODFx,y* PreOutageFlowY
             if security
                 isnothing(lodf) && error("lodf must be defined")
-                for cbr in in_branches
-                    cname = get_name(cbr)
-                    @constraint(
-                        m,
-                        CF[iname, name, cname] >= get_rate(br) * -1
-                    )
-                    @constraint(
-                        m,
-                        CF[iname, name, cname] <= get_rate(br)
-                    )
-                    @constraint(
-                        m,
-                        CF[iname, name, cname] ==
-                        F[iname, name] + lodf[name, cname] * F[iname, cname]
-                    )
+                isnothing(c_branches) && error("c_branches must be defined")
+                if br in c_branches
+                    for cbr in c_branches
+                        cname = get_name(cbr)
+                        @constraint(
+                            m,
+                            CF[iname, name, cname] >= get_rate(br) * -1
+                        )
+                        @constraint(
+                            m,
+                            CF[iname, name, cname] <= get_rate(br)
+                        )
+                        @constraint(
+                            m,
+                            CF[iname, name, cname] ==
+                            F[iname, name] + lodf[name, cname] * F[iname, cname]
+                        )
+                    end
                 end
             end
         end
@@ -298,6 +303,7 @@ function find_interface_limits(
     branch_filter = x -> get_available(x),
     ptdf = VirtualPTDF(sys),
     lodf = nothing,
+    c_branches = nothing,
     security = false, # n-1 security
     enforce_gen_limits = false,
     enforce_load_distribution = false,
@@ -336,6 +342,7 @@ function find_interface_limits(
         gen_buses,
         load_buses,
         security,
+        c_branches,
         enforce_load_distribution,
     )
     add_constraints!(
@@ -349,6 +356,7 @@ function find_interface_limits(
         ptdf,
         security,
         lodf,
+        c_branches,
         sys,
         enforce_gen_limits,
         enforce_load_distribution,
@@ -381,6 +389,7 @@ function find_interface_limits(
     branch_filter = x -> get_available(x),
     ptdf = VirtualPTDF(sys),
     lodf = nothing,
+    c_branches = nothing,
     security = false, # n-1 security
     enforce_gen_limits = false,
     enforce_load_distribution = false,
@@ -403,6 +412,7 @@ function find_interface_limits(
             branch_filter = branch_filter,
             ptdf = ptdf,
             lodf = lodf,
+            c_branches = c_branches,
             security = security,
             enforce_gen_limits = enforce_gen_limits,
             enforce_load_distribution = enforce_load_distribution,
@@ -423,6 +433,7 @@ function find_monolithic_interface_limits(
     branch_filter = x -> get_available(x),
     ptdf = VirtualPTDF(sys),
     lodf = nothing,
+    c_branches = nothing,
     security = false,
     enforce_load_distribution = false,
     enforce_gen_limits = false,
@@ -444,6 +455,7 @@ function find_monolithic_interface_limits(
         gen_buses,
         load_buses,
         security,
+        c_branches,
         enforce_load_distribution,
     )
     for (interface_key, interface) in interfaces
@@ -458,6 +470,7 @@ function find_monolithic_interface_limits(
             ptdf,
             security,
             lodf,
+            c_branches,
             sys,
             enforce_gen_limits,
             enforce_load_distribution,
