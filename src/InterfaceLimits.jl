@@ -38,25 +38,21 @@ function find_neighbor_lines(
     branch_filter = x -> get_available(x),
     hops::Int64 = 3, # since only considering lines, update default hops to 3
 )
-    in_branches = collect(get_components(branch_filter, ACBranch, sys))
-    community = Set(interface_key)
-    # filter for all lines with to and/or from bus in the interface key areas
-    line_community = Set(filter(
-                    (
-                    x -> get_name(get_area(get_from(get_arc(x)))) ∈ community &&
-                    get_name(get_area(get_to(get_arc(x)))) ∈ community
-                    ),
-                    in_branches
-                ))
-    # now get all the buses connected to the branches in line community 
-    bus_community = Set(union(get_to.(get_arc.(line_community)),get_from.(get_arc.(line_community))))
- 
+    in_branches = collect(get_components(branch_filter, ACBranch, sys)) #for filtering lines at end
+    all_branches = collect(get_components(x -> get_available(x), ACBranch, sys)) #for finding buses
+    areas = Set(interface_key)
+    # get all the buses in the two areas of the interface
+    bus_community = collect(get_components(x -> get_name(get_area(x)) ∈ areas, ACBus, sys))
+    line_neighbors = Set{ACBranch}
     for hop = 1:hops
-        add_neighbors =
-            findall(x -> (get_from(get_arc(x)) ∈ bus_community || get_to(get_arc(x)) ∈ bus_community), in_branches)
-        union!(line_community, union(in_branches[add_neighbors]))
-        bus_community = Set(union(get_to.(get_arc.(line_community)),get_from.(get_arc.(line_community))))
+        line_indexes =
+            findall(x -> (get_from(get_arc(x)) ∈ bus_community || get_to(get_arc(x)) ∈ bus_community), all_branches)
+        line_neighbors = all_branches[line_indexes]
+        # collect all buses regardless of branch filter
+        bus_community = Set(union(get_to.(get_arc.(line_neighbors)),get_from.(get_arc.(line_neighbors))))
     end
+    # filter out line neighbors to only those in branch filter
+    line_community = intersect(in_branches, line_neighbors)
     return line_community, bus_community
 end
 
@@ -307,7 +303,7 @@ function find_interface_limits(
     security = false, # n-1 security
     enforce_gen_limits = false,
     enforce_load_distribution = false,
-    hops = 1, # neighboring areas to include
+    hops = 3, # neighboring areas to include
 )
     # Region hops:
     #interface_neighbors = find_neighbor_interfaces(interfaces, hops)
@@ -324,9 +320,7 @@ function find_interface_limits(
     #load_buses = find_load_buses(sys, neighbors)
 
     # Line hops:
-    no_bf = x -> get_available(x)
-    line_neighbors, bus_neighbors = find_neighbor_lines(sys, interface_key, no_bf, hops)
-    in_branches = Set(filter(branch_filter,line_neighbors)) # Filter branches after collecting all within n hops
+    in_branches, bus_neighbors = find_neighbor_lines(sys, interface_key, branch_filter, hops)
     gen_buses = find_gen_buses(sys, bus_neighbors)
     load_buses = find_load_buses(sys, bus_neighbors)
 
@@ -393,7 +387,7 @@ function find_interface_limits(
     security = false, # n-1 security
     enforce_gen_limits = false,
     enforce_load_distribution = false,
-    hops = 1, # neighboring areas to include
+    hops = 3, # neighboring areas to include
 )
 
     interfaces = find_interfaces(sys, branch_filter)
