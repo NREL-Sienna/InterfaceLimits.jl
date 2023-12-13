@@ -97,6 +97,77 @@ function find_neighbor_interfaces(
     return neighbors
 end
 
+function find_injector_type(gen_buses, load_buses)
+    injector_type = Dict{ACBus, Type{<: StaticInjection}}()
+    for bus in union(gen_buses, load_buses)
+        if bus in intersect(gen_buses, load_buses)
+            injector_type[bus] = StaticInjection
+        elseif bus in gen_buses
+            injector_type[bus] = Generator
+        else
+            injector_type[bus] = ElectricLoad
+        end
+    end
+    return injector_type
+end
+
+function add_injector_constraint!( # for buses that have loads and generators
+    m::Model,
+    iname::String,
+    bus_name::String,
+    injector_type::Type{StaticInjection},
+    P; #injection variable
+    L = nothing, # pass this if enforce_load_distribution = true
+    ldf = nothing, # pass this if enforce_load_distribution = true
+    max_gen = nothing, # pass this if enforce_gen_limits = true
+)   
+    if isnothing(ldf) == false
+        isnothing(L) && error("L variable must be defined if providing LDF")
+        @constraint(m, P[iname, bus_name] >= ldf[bus_name] * L)
+        if isnothing(max_gen) == false
+            max_gen += ldf[bus_name] * L
+        end
+    end
+
+    if isnothing(max_gen) == false
+        @constraint(m, P[iname, bus_name] <= max_gen)
+    end
+end
+
+function add_injector_constraint!( # for buses that have loads only
+    m::Model,
+    iname::String,
+    bus_name::String,
+    injector_type::Type{ElectricLoad},
+    P; #injection variable
+    L = nothing, # pass this if enforce_load_distribution = true
+    ldf = nothing, # pass this if enforce_load_distribution = true
+    max_gen = nothing, # pass this if enforce_gen_limits = true
+)
+    if isnothing(ldf) == false
+        isnothing(L) && error("L variable must be defined if providing LDF")
+        @constraint(m, P[iname, bus_name] == ldf[bus_name] * L)
+    else
+        @constraint(m, P[iname, bus_name] <= 0)
+    end 
+end
+
+function add_injector_constraint!( # for buses that have generators only
+    m::Model,
+    iname::String,
+    bus_name::String,
+    injector_type::Type{Generator},
+    P; #injection variable
+    L = nothing, # pass this if enforce_load_distribution = true
+    ldf = nothing, # pass this if enforce_load_distribution = true
+    max_gen = nothing, # pass this if enforce_gen_limits = true
+)
+    @constraint(m, P[iname, bus_name] >= 0)
+    if isnothing(max_gen) == false
+        @constraint(m, P[iname, bus_name] <= max_gen)
+    end
+end
+
 function add_variables!(
     m,
     inames,
@@ -144,6 +215,8 @@ function add_constraints!(
     F = vars["flow"]
     I = vars["interface"]
     P = vars["injection"]
+    L = nothing
+    ldf = nothing
     if enforce_load_distribution
         L = vars["load"]
         ldf = find_ldfs(sys, load_buses)
@@ -153,11 +226,16 @@ function add_constraints!(
         CF = vars["cont_flow"]
     end
 
+    injector_types = find_injector_type(gen_buses, load_buses)
+
     for ikey in [interface_key, reverse(interface_key)]
         forward = ikey == interface_key ? 1 : -1
         iname = join(ikey, "_")
 
-        for b in gen_buses # only gens connected
+        for b in union(gen_buses, load_buses)
+            bus_name = get_name(b)
+            injector_type = injector_types[b]
+            max_gen = nothing
             if enforce_gen_limits
                 max_gen = sum(
                     get_max_active_power.(
@@ -168,16 +246,9 @@ function add_constraints!(
                         )
                     ),
                 )
-                @constraint(m, P[iname, get_name(b)] <= max_gen)
             end
-            @constraint(m, P[iname, get_name(b)] >= 0.0)
-        end
-        for b in load_buses # only loads connected
-            if enforce_load_distribution
-                @constraint(m, P[iname, get_name(b)] == ldf[get_name(b)] * L)
-            else
-                @constraint(m, P[iname, get_name(b)] <= 0.0)
-            end
+            add_injector_constraint!(m,iname,bus_name,injector_type,P,
+                                        L = L,ldf = ldf,max_gen = max_gen,) 
         end
 
         for br in in_branches
