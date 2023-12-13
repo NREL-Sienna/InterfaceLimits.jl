@@ -113,59 +113,69 @@ end
 
 function add_injector_constraint!( # for buses that have loads and generators
     m::Model,
-    iname::String,
-    bus_name::String,
     injector_type::Type{StaticInjection},
-    P; #injection variable
-    L = nothing, # pass this if enforce_load_distribution = true
-    ldf = nothing, # pass this if enforce_load_distribution = true
+    p_var; #injection variable,
+    ldf_lim = nothing,
+    # L = nothing, # pass this if enforce_load_distribution = true
+    # ldf = nothing, # pass this if enforce_load_distribution = true
     max_gen = nothing, # pass this if enforce_gen_limits = true
-)   
-    if isnothing(ldf) == false
-        isnothing(L) && error("L variable must be defined if providing LDF")
-        @constraint(m, P[iname, bus_name] >= ldf[bus_name] * L)
-        if isnothing(max_gen) == false
-            max_gen += ldf[bus_name] * L
-        end
+)
+    if !isnothing(ldf_lim)
+        @constraint(m, p_var >= ldf_lim)
+        !isnothing(max_gen) && max_gen += ldf_lim
     end
+    !isnothing(max_gen) && @constraint(m, p_var <= max_gen)
 
-    if isnothing(max_gen) == false
-        @constraint(m, P[iname, bus_name] <= max_gen)
-    end
+    # if isnothing(ldf) == false
+    #     isnothing(L) && error("L variable must be defined if providing LDF")
+    #     @constraint(m, P[iname, bus_name] >= ldf[bus_name] * L)
+    #     if isnothing(max_gen) == false
+    #         max_gen += ldf[bus_name] * L
+    #     end
+    # end
+
+    # if isnothing(max_gen) == false
+    #     @constraint(m, P[iname, bus_name] <= max_gen)
+    # end
 end
 
 function add_injector_constraint!( # for buses that have loads only
     m::Model,
-    iname::String,
-    bus_name::String,
     injector_type::Type{ElectricLoad},
-    P; #injection variable
-    L = nothing, # pass this if enforce_load_distribution = true
-    ldf = nothing, # pass this if enforce_load_distribution = true
+    p_var; #injection variable,
+    ldf_lim = nothing,
+    # L = nothing, # pass this if enforce_load_distribution = true
+    # ldf = nothing, # pass this if enforce_load_distribution = true
     max_gen = nothing, # pass this if enforce_gen_limits = true
 )
-    if isnothing(ldf) == false
-        isnothing(L) && error("L variable must be defined if providing LDF")
-        @constraint(m, P[iname, bus_name] == ldf[bus_name] * L)
+    if !isnothing(ldf_lim)
+        @constraint(m, p_var == ldf_lim)
     else
-        @constraint(m, P[iname, bus_name] <= 0)
-    end 
+        @constraint(m, p_var <= 0.0)
+    end
+    # if isnothing(ldf) == false
+    #     isnothing(L) && error("L variable must be defined if providing LDF")
+    #     @constraint(m, P[iname, bus_name] == ldf[bus_name] * L)
+    # else
+    #     @constraint(m, P[iname, bus_name] <= 0)
+    # end
 end
 
 function add_injector_constraint!( # for buses that have generators only
     m::Model,
-    iname::String,
-    bus_name::String,
     injector_type::Type{Generator},
-    P; #injection variable
-    L = nothing, # pass this if enforce_load_distribution = true
-    ldf = nothing, # pass this if enforce_load_distribution = true
+    p_var; #injection variable,
+    ldf_lim = nothing,
+    # L = nothing, # pass this if enforce_load_distribution = true
+    # ldf = nothing, # pass this if enforce_load_distribution = true
     max_gen = nothing, # pass this if enforce_gen_limits = true
 )
-    @constraint(m, P[iname, bus_name] >= 0)
-    if isnothing(max_gen) == false
-        @constraint(m, P[iname, bus_name] <= max_gen)
-    end
+    @constraint(m, p_var >= 0.0)
+    !isnothing(max_gen) && @constraint(m, p_var <= max_gen)
+    # @constraint(m, P[iname, bus_name] >= 0)
+    # if isnothing(max_gen) == false
+    #     @constraint(m, P[iname, bus_name] <= max_gen)
+    # end
 end
 
 function add_variables!(
@@ -175,7 +185,7 @@ function add_variables!(
     gen_buses,
     load_buses,
     security,
-    c_branches, #must not be nothing if security = true 
+    c_branches, #must not be nothing if security = true
     enforce_load_distribution,
 )
     # create flow variables for branches
@@ -215,8 +225,6 @@ function add_constraints!(
     F = vars["flow"]
     I = vars["interface"]
     P = vars["injection"]
-    L = nothing
-    ldf = nothing
     if enforce_load_distribution
         L = vars["load"]
         ldf = find_ldfs(sys, load_buses)
@@ -234,8 +242,7 @@ function add_constraints!(
 
         for b in union(gen_buses, load_buses)
             bus_name = get_name(b)
-            injector_type = injector_types[b]
-            max_gen = nothing
+            ldf_lim = enforce_load_distribution ? ldf[bus_name] * L : nothing
             if enforce_gen_limits
                 max_gen = sum(
                     get_max_active_power.(
@@ -246,9 +253,20 @@ function add_constraints!(
                         )
                     ),
                 )
+            else
+                max_gen = nothing
             end
-            add_injector_constraint!(m,iname,bus_name,injector_type,P,
-                                        L = L,ldf = ldf,max_gen = max_gen,) 
+
+            add_injector_constraint!(
+                m,
+                injector_types[b],
+                P[iname, bus_name],
+                ldf_lim = ldf_lim,
+                max_gen = max_gen,
+            )
+
+            # add_injector_constraint!(m,iname,bus_name,injector_type,P,
+            #                             L = L,ldf = ldf,max_gen = max_gen,)
         end
 
         for br in in_branches
@@ -331,7 +349,7 @@ function find_load_buses(sys, bus_neighbors)
         x -> x ∈ bus_neighbors,
         Set(get_bus.(get_components(LOAD_TYPES, sys))),
     )
-    
+
     # Region hops:
     #load_buses = filter(
     #    x -> get_name(get_area(x)) ∈ bus_neighbors,
@@ -344,7 +362,7 @@ end
 
 function find_ldfs(sys, load_buses)
     fa_loads = get_components(FixedAdmittance, sys)
-    total_load = sum(get_max_active_power.(get_components(get_available, StandardLoad, sys))) + 
+    total_load = sum(get_max_active_power.(get_components(get_available, StandardLoad, sys))) +
                     sum(real.(get_base_voltage.(get_bus.(fa_loads)) .^ 2 .* get_Y.(fa_loads)))
     ldf = Dict([
         get_name(l) =>
@@ -352,9 +370,9 @@ function find_ldfs(sys, load_buses)
                 get_max_active_power.(
                     get_components(x -> get_bus(x) == l, StandardLoad, sys)
                 ), init=0
-            ) + 
+            ) +
             sum(
-                real.(get_base_voltage.(get_bus.(get_components(x -> get_bus(x) == l, FixedAdmittance, sys))) 
+                real.(get_base_voltage.(get_bus.(get_components(x -> get_bus(x) == l, FixedAdmittance, sys)))
                     .^ 2 .* get_Y.(get_components(x -> get_bus(x) == l, FixedAdmittance, sys))), init=0
             )) / total_load for l in load_buses
     ])
