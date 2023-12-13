@@ -116,27 +116,13 @@ function add_injector_constraint!( # for buses that have loads and generators
     injector_type::Type{StaticInjection},
     p_var; #injection variable,
     ldf_lim = nothing,
-    # L = nothing, # pass this if enforce_load_distribution = true
-    # ldf = nothing, # pass this if enforce_load_distribution = true
     max_gen = nothing, # pass this if enforce_gen_limits = true
 )
     if !isnothing(ldf_lim)
         @constraint(m, p_var >= ldf_lim)
-        !isnothing(max_gen) && max_gen += ldf_lim
+        !isnothing(max_gen) && (max_gen += ldf_lim)
     end
     !isnothing(max_gen) && @constraint(m, p_var <= max_gen)
-
-    # if isnothing(ldf) == false
-    #     isnothing(L) && error("L variable must be defined if providing LDF")
-    #     @constraint(m, P[iname, bus_name] >= ldf[bus_name] * L)
-    #     if isnothing(max_gen) == false
-    #         max_gen += ldf[bus_name] * L
-    #     end
-    # end
-
-    # if isnothing(max_gen) == false
-    #     @constraint(m, P[iname, bus_name] <= max_gen)
-    # end
 end
 
 function add_injector_constraint!( # for buses that have loads only
@@ -144,8 +130,6 @@ function add_injector_constraint!( # for buses that have loads only
     injector_type::Type{ElectricLoad},
     p_var; #injection variable,
     ldf_lim = nothing,
-    # L = nothing, # pass this if enforce_load_distribution = true
-    # ldf = nothing, # pass this if enforce_load_distribution = true
     max_gen = nothing, # pass this if enforce_gen_limits = true
 )
     if !isnothing(ldf_lim)
@@ -153,12 +137,6 @@ function add_injector_constraint!( # for buses that have loads only
     else
         @constraint(m, p_var <= 0.0)
     end
-    # if isnothing(ldf) == false
-    #     isnothing(L) && error("L variable must be defined if providing LDF")
-    #     @constraint(m, P[iname, bus_name] == ldf[bus_name] * L)
-    # else
-    #     @constraint(m, P[iname, bus_name] <= 0)
-    # end
 end
 
 function add_injector_constraint!( # for buses that have generators only
@@ -166,16 +144,10 @@ function add_injector_constraint!( # for buses that have generators only
     injector_type::Type{Generator},
     p_var; #injection variable,
     ldf_lim = nothing,
-    # L = nothing, # pass this if enforce_load_distribution = true
-    # ldf = nothing, # pass this if enforce_load_distribution = true
     max_gen = nothing, # pass this if enforce_gen_limits = true
 )
     @constraint(m, p_var >= 0.0)
     !isnothing(max_gen) && @constraint(m, p_var <= max_gen)
-    # @constraint(m, P[iname, bus_name] >= 0)
-    # if isnothing(max_gen) == false
-    #     @constraint(m, P[iname, bus_name] <= max_gen)
-    # end
 end
 
 function add_variables!(
@@ -264,9 +236,6 @@ function add_constraints!(
                 ldf_lim = ldf_lim,
                 max_gen = max_gen,
             )
-
-            # add_injector_constraint!(m,iname,bus_name,injector_type,P,
-            #                             L = L,ldf = ldf,max_gen = max_gen,)
         end
 
         for br in in_branches
