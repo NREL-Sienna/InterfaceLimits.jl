@@ -122,7 +122,7 @@ function add_injector_constraint!( # for buses that have loads and generators
 )
     if !isnothing(ldf_lim)
         @constraint(m, p_var >= ldf_lim)
-        max_gen += ldf_lim
+        !isnothing(max_gen) && max_gen += ldf_lim
     end
     !isnothing(max_gen) && @constraint(m, p_var <= max_gen)
 
@@ -171,7 +171,7 @@ function add_injector_constraint!( # for buses that have generators only
     max_gen = nothing, # pass this if enforce_gen_limits = true
 )
     @constraint(m, p_var >= 0.0)
-    !isnothing(upper_bound) && @constraint(m, p_var <= max_gen)
+    !isnothing(max_gen) && @constraint(m, p_var <= max_gen)
     # @constraint(m, P[iname, bus_name] >= 0)
     # if isnothing(max_gen) == false
     #     @constraint(m, P[iname, bus_name] <= max_gen)
@@ -225,8 +225,6 @@ function add_constraints!(
     F = vars["flow"]
     I = vars["interface"]
     P = vars["injection"]
-    L = nothing
-    ldf = nothing
     if enforce_load_distribution
         L = vars["load"]
         ldf = find_ldfs(sys, load_buses)
