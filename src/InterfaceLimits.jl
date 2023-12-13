@@ -214,8 +214,8 @@ function add_constraints!(
 
         for b in union(gen_buses, load_buses)
             bus_name = get_name(b)
-            ldf_lim = enforce_load_distribution ? ldf[bus_name] * L : nothing
-            if enforce_gen_limits
+            ldf_lim = (enforce_load_distribution && (b in load_buses)) ? ldf[bus_name] * L : nothing
+            if enforce_gen_limits && (b in gen_buses)
                 max_gen = sum(
                     get_max_active_power.(
                         get_components(
