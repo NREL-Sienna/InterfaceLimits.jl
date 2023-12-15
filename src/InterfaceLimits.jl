@@ -62,7 +62,7 @@ function find_neighbor_lines(
     branch_filter = x -> get_available(x),
     hops::Int64 = 3,
 )
-    line_neighbors = Dict{Pair{String,String},Set{ACBranch}}()
+    line_neighbors = Dict{Pair{String,String},Vector{ACBranch}}()
     bus_neighbors = Dict{Pair{String,String},Set{}}()
     for interface in collect(keys(interfaces))
         line_neighbors[interface], bus_neighbors[interface] = find_neighbor_lines(sys, interface, branch_filter, hops)
