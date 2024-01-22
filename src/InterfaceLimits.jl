@@ -178,6 +178,11 @@ function add_variables!(
     return vars
 end
 
+function line_direction(br, iname)
+    forward = get_name(get_area(get_from(get_arc(br)))) == first(iname) ? 1.0 : -1.0
+    return forward
+end
+
 function add_constraints!(
     m::Model,
     vars,
@@ -239,7 +244,6 @@ function add_constraints!(
 
         for br in in_branches
             name = get_name(br)
-            forward = get_area(get_from(get_arc(br))) == first(ikey) ? 1 : -1
             @constraint(m, F[iname, name] >= get_rate(br) * -1)
             @constraint(m, F[iname, name] <= get_rate(br))
 
@@ -248,7 +252,7 @@ function add_constraints!(
                 b in union(gen_buses, load_buses)
             ]
             push!(ptdf_expr, 0.0)
-            @constraint(m, F[iname, name] == sum(ptdf_expr) * forward)
+            @constraint(m, F[iname, name] == sum(ptdf_expr))
             # OutageFlowX = PreOutageFlowX + LODFx,y* PreOutageFlowY
             if security
                 isnothing(lodf) && error("lodf must be defined")
@@ -273,7 +277,7 @@ function add_constraints!(
             end
         end
 
-        @constraint(m, I[iname] == sum(F[iname, get_name(br)] for br in interface))
+        @constraint(m, I[iname] == sum(F[iname, get_name(br) * line_direction(br, iname)] for br in interface))
     end
 end
 
