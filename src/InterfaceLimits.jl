@@ -209,7 +209,6 @@ function add_constraints!(
     injector_types = find_injector_type(gen_buses, load_buses)
 
     for ikey in [interface_key, reverse(interface_key)]
-        forward = ikey == interface_key ? 1 : -1
         iname = join(ikey, "_")
 
         for b in union(gen_buses, load_buses)
@@ -240,6 +239,7 @@ function add_constraints!(
 
         for br in in_branches
             name = get_name(br)
+            forward = get_area(get_from(get_arc(br))) == first(ikey) ? 1 : -1
             @constraint(m, F[iname, name] >= get_rate(br) * -1)
             @constraint(m, F[iname, name] <= get_rate(br))
 
