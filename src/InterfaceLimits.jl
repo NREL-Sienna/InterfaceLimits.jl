@@ -277,7 +277,7 @@ function add_constraints!(
             end
         end
 
-        @constraint(m, I[iname] == sum(F[iname, get_name(br) * line_direction(br, iname)] for br in interface))
+        @constraint(m, I[iname] == sum(F[iname, get_name(br)] * line_direction(br, iname) for br in interface))
     end
 end
 
