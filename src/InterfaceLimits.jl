@@ -178,8 +178,8 @@ function add_variables!(
     return vars
 end
 
-function line_direction(br, iname)
-    forward = get_name(get_area(get_from(get_arc(br)))) == first(iname) ? 1.0 : -1.0
+function line_direction(br, ikey)
+    forward = get_name(get_area(get_from(get_arc(br)))) == first(ikey) ? 1.0 : -1.0
     return forward
 end
 
@@ -277,7 +277,7 @@ function add_constraints!(
             end
         end
 
-        @constraint(m, I[iname] == sum(F[iname, get_name(br)] * line_direction(br, iname) for br in interface))
+        @constraint(m, I[iname] == sum(F[iname, get_name(br)] * line_direction(br, ikey) for br in interface))
     end
 end
 
