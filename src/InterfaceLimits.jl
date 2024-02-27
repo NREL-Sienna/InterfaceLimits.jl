@@ -32,6 +32,7 @@ function find_interfaces(sys::System, branch_filter = x -> get_available(x))
     end
     return Dict(zip([k[1] => k[2] for k in collect.(keys(interfaces))], values(interfaces)))
 end
+
 function find_neighbor_lines(
     sys::System,
     interface_key::Pair{String,String},
@@ -45,11 +46,17 @@ function find_neighbor_lines(
     bus_community = collect(get_components(x -> get_name(get_area(x)) ∈ areas, ACBus, sys))
     line_neighbors = Set{ACBranch}
     for hop = 1:hops
-        line_indexes =
-            findall(x -> (get_from(get_arc(x)) ∈ bus_community || get_to(get_arc(x)) ∈ bus_community), all_branches)
+        line_indexes = findall(
+            x -> (
+                get_from(get_arc(x)) ∈ bus_community || get_to(get_arc(x)) ∈ bus_community
+            ),
+            all_branches,
+        )
         line_neighbors = all_branches[line_indexes]
         # collect all buses regardless of branch filter
-        bus_community = Set(union(get_to.(get_arc.(line_neighbors)),get_from.(get_arc.(line_neighbors))))
+        bus_community = Set(
+            union(get_to.(get_arc.(line_neighbors)), get_from.(get_arc.(line_neighbors))),
+        )
     end
     # filter out line neighbors to only those in branch filter
     line_community = intersect(in_branches, line_neighbors)
@@ -65,7 +72,8 @@ function find_neighbor_lines(
     line_neighbors = Dict{Pair{String,String},Vector{ACBranch}}()
     bus_neighbors = Dict{Pair{String,String},Set{}}()
     for interface in collect(keys(interfaces))
-        line_neighbors[interface], bus_neighbors[interface] = find_neighbor_lines(sys, interface, branch_filter, hops)
+        line_neighbors[interface], bus_neighbors[interface] =
+            find_neighbor_lines(sys, interface, branch_filter, hops)
     end
     return line_neighbors, bus_neighbors
 end
@@ -97,15 +105,17 @@ function find_neighbor_interfaces(
     return neighbors
 end
 
-function find_injector_type(gen_buses, load_buses)
-    injector_type = Dict{ACBus, Type{<: StaticInjection}}()
+function find_injector_type(gen_buses, load_buses, hvdc_buses)
+    injector_type = Dict{ACBus,Type{<:StaticInjection}}()
     for bus in union(gen_buses, load_buses)
         if bus in intersect(gen_buses, load_buses)
             injector_type[bus] = StaticInjection
         elseif bus in gen_buses
             injector_type[bus] = Generator
-        else
+        elseif bus in load_buses
             injector_type[bus] = ElectricLoad
+        else
+            injector_type[bus] = InterconnectingConverter
         end
     end
     return injector_type
@@ -114,40 +124,55 @@ end
 function add_injector_constraint!( # for buses that have loads and generators
     m::Model,
     injector_type::Type{StaticInjection},
-    p_var; #injection variable,
+    p_var, #injection variable,
+    hvdc_inj;
     ldf_lim = nothing,
     max_gen = nothing, # pass this if enforce_gen_limits = true
 )
     if !isnothing(ldf_lim)
-        @constraint(m, p_var >= ldf_lim)
+        @constraint(m, p_var - hvdc_inj >= ldf_lim)
         !isnothing(max_gen) && (max_gen += ldf_lim)
     end
-    !isnothing(max_gen) && @constraint(m, p_var <= max_gen)
+    !isnothing(max_gen) && @constraint(m, p_var - hvdc_inj <= max_gen)
 end
 
 function add_injector_constraint!( # for buses that have loads only
     m::Model,
     injector_type::Type{ElectricLoad},
-    p_var; #injection variable,
+    p_var, #injection variable,
+    hvdc_inj;
     ldf_lim = nothing,
     max_gen = nothing, # pass this if enforce_gen_limits = true
 )
     if !isnothing(ldf_lim)
-        @constraint(m, p_var == ldf_lim)
+        @constraint(m, p_var - hvdc_inj == ldf_lim)
     else
-        @constraint(m, p_var <= 0.0)
+        @constraint(m, p_var - hvdc_inj <= 0.0)
     end
+
 end
 
 function add_injector_constraint!( # for buses that have generators only
     m::Model,
     injector_type::Type{Generator},
-    p_var; #injection variable,
+    p_var, #injection variable,
+    hvdc_inj;
     ldf_lim = nothing,
     max_gen = nothing, # pass this if enforce_gen_limits = true
 )
-    @constraint(m, p_var >= 0.0)
-    !isnothing(max_gen) && @constraint(m, p_var <= max_gen)
+    @constraint(m, p_var - hvdc_inj >= 0.0)
+    !isnothing(max_gen) && @constraint(m, p_var - hvdc_inj <= max_gen)
+end
+
+function add_injector_constraint!( # for buses that have generators only
+    m::Model,
+    injector_type::Type{InterconnectingConverter},
+    p_var, #injection variable,
+    hvdc_inj;
+    ldf_lim = nothing,
+    max_gen = nothing, # pass this if enforce_gen_limits = true
+)
+    @constraint(m, p_var - hvdc_inj == 0.0)
 end
 
 function add_variables!(
@@ -178,10 +203,46 @@ function add_variables!(
     return vars
 end
 
-function line_direction(br, ikey)
+function line_direction(br::ACBranch, ikey::Pair{String,String})
     forward = get_name(get_area(get_from(get_arc(br)))) == first(ikey) ? 1.0 : -1.0
     return forward
 end
+
+function get_flow_lims(br::ACBranch)
+    return (forward = get_rate(br), reverse = -1 * get_rate(br))
+end
+
+function get_flow_lims(br::TwoTerminalHVDCLine)
+    return (
+        forward = get_active_power_limits_to(br).max,
+        reverse = -1 * get_active_power_limits_from(br).max,
+    )
+end
+
+function get_flow_lims(br::Union{Branch,TwoTerminalVSCDCLine})
+    @warn "$(typeof(br)) not considered in interface limit calculations"
+    return (forward = Inf, reverse = -Inf)
+end
+
+function get_directional_flow_lim(br::ACBranch, ikey::Pair{String,String})
+    flow_lim = get_flow_lims(br)
+    dir = line_direction(br, ikey)
+    lim = dir == 1.0 ? flow_lim.forward : flow_lim.reverse * dir
+    return lim
+end
+
+function find_hvdc_buses(sys::System)
+    dc_br = get_available_components(TwoTerminalHVDCLine, sys)
+    from_b = get_from.(get_arc.(dc_br))
+    to_b = get_to.(get_arc.(dc_br))
+    return union(from_b, to_b)
+end
+
+function get_hvdc_inj(b, iname, F)
+    b ∉ axes(F)[2] && return 0.0
+    return F[iname, b]
+end
+
 
 function add_constraints!(
     m::Model,
@@ -211,14 +272,49 @@ function add_constraints!(
         CF = vars["cont_flow"]
     end
 
-    injector_types = find_injector_type(gen_buses, load_buses)
+    hvdc_buses = find_hvdc_buses(sys)
+    injector_types = find_injector_type(gen_buses, load_buses, hvdc_buses)
 
     for ikey in [interface_key, reverse(interface_key)]
         iname = join(ikey, "_")
 
-        for b in union(gen_buses, load_buses)
+        for br in in_branches
+            name = get_name(br)
+            flow_lims = get_flow_lims(br)
+            @constraint(m, F[iname, name] >= flow_lims.reverse)
+            @constraint(m, F[iname, name] <= flow_lims.forward)
+
+            br isa TwoTerminalHVDCLine && continue
+
+            ptdf_expr = [
+                ptdf[name, get_number(b)] * P[iname, get_name(b)] for
+                b in union(gen_buses, load_buses, hvdc_buses)
+            ]
+            push!(ptdf_expr, 0.0)
+            @constraint(m, F[iname, name] == sum(ptdf_expr))
+            # OutageFlowX = PreOutageFlowX + LODFx,y* PreOutageFlowY
+            if security
+                isnothing(lodf) && error("lodf must be defined")
+                if br in c_branches
+                    for cbr in c_branches
+                        cname = get_name(cbr)
+                        @constraint(m, CF[iname, name, cname] >= flow_lims.reverse)
+                        @constraint(m, CF[iname, name, cname] <= flow_lims.forward)
+                        @constraint(
+                            m,
+                            CF[iname, name, cname] ==
+                            F[iname, name] + lodf[name, cname] * F[iname, cname]
+                        )
+                    end
+                end
+            end
+        end
+
+        for b in union(gen_buses, load_buses, hvdc_buses)
             bus_name = get_name(b)
-            ldf_lim = (enforce_load_distribution && (b in load_buses)) ? ldf[bus_name] * L : nothing
+            ldf_lim =
+                (enforce_load_distribution && (b in load_buses)) ? ldf[bus_name] * L :
+                nothing
             if enforce_gen_limits && (b in gen_buses)
                 max_gen = sum(
                     get_max_active_power.(
@@ -233,58 +329,31 @@ function add_constraints!(
                 max_gen = nothing
             end
 
+            hvdc_inj = get_hvdc_inj(b, iname, F)
+
             add_injector_constraint!(
                 m,
                 injector_types[b],
                 P[iname, bus_name],
+                hvdc_inj,
                 ldf_lim = ldf_lim,
                 max_gen = max_gen,
             )
         end
 
-        for br in in_branches
-            name = get_name(br)
-            @constraint(m, F[iname, name] >= get_rate(br) * -1)
-            @constraint(m, F[iname, name] <= get_rate(br))
-
-            ptdf_expr = [
-                ptdf[name, get_number(b)] * P[iname, get_name(b)] for
-                b in union(gen_buses, load_buses)
-            ]
-            push!(ptdf_expr, 0.0)
-            @constraint(m, F[iname, name] == sum(ptdf_expr))
-            # OutageFlowX = PreOutageFlowX + LODFx,y* PreOutageFlowY
-            if security
-                isnothing(lodf) && error("lodf must be defined")
-                if br in c_branches
-                    for cbr in c_branches
-                        cname = get_name(cbr)
-                        @constraint(
-                            m,
-                            CF[iname, name, cname] >= get_rate(br) * -1
-                        )
-                        @constraint(
-                            m,
-                            CF[iname, name, cname] <= get_rate(br)
-                        )
-                        @constraint(
-                            m,
-                            CF[iname, name, cname] ==
-                            F[iname, name] + lodf[name, cname] * F[iname, cname]
-                        )
-                    end
-                end
-            end
-        end
-
-        @constraint(m, I[iname] == sum(F[iname, get_name(br)] * line_direction(br, ikey) for br in interface))
+        @constraint(
+            m,
+            I[iname] ==
+            sum(F[iname, get_name(br)] * line_direction(br, ikey) for br in interface)
+        )
     end
 end
 
 function ensure_injector!(inj_buses, bus_neighbors, bustype, sys)
     !isempty(inj_buses) && return # only add an injector if set is empty
     #Line hops:
-    inj_buses = get_components(x -> (x ∈ bus_neighbors) && (get_bustype(x) == bustype), Bus, sys)
+    inj_buses =
+        get_components(x -> (x ∈ bus_neighbors) && (get_bustype(x) == bustype), Bus, sys)
 
     #Region hops:
     #inj_buses = get_components(
@@ -303,7 +372,7 @@ function find_gen_buses(sys, bus_neighbors)
     # Line hops:
     gen_buses = filter(
         x -> x ∈ bus_neighbors,
-        Set(get_bus.(get_components(Generator, sys))),
+        Set(get_bus.(get_available_components(Generator, sys))),
     )
 
     # Region hops:
@@ -318,9 +387,14 @@ end
 
 function find_load_buses(sys, bus_neighbors)
     # Line hops:
-    load_buses = filter(
-        x -> x ∈ bus_neighbors,
-        Set(get_bus.(get_components(LOAD_TYPES, sys))),
+    load_buses = Set(
+        get_bus.(
+            get_components(
+                x -> get_available(x) && get_bus(x) ∈ bus_neighbors,
+                LOAD_TYPES,
+                sys,
+            )
+        ),
     )
 
     # Region hops:
@@ -333,23 +407,23 @@ function find_load_buses(sys, bus_neighbors)
     return load_buses
 end
 
+function get_peak_load(load::ElectricLoad)
+    return get_max_active_power(load)
+end
+
+function get_peak_load(load::FixedAdmittance)
+    return real(get_base_voltage(get_bus(load))^2 * get_Y(load))
+end
+
 function find_ldfs(sys, load_buses)
-    fa_loads = get_components(FixedAdmittance, sys)
-    total_load = sum(get_max_active_power.(get_components(get_available, StandardLoad, sys))) +
-                    sum(real.(get_base_voltage.(get_bus.(fa_loads)) .^ 2 .* get_Y.(fa_loads)))
-    ldf = Dict([
-        get_name(l) =>
-            (sum(
-                get_max_active_power.(
-                    get_components(x -> get_bus(x) == l, StandardLoad, sys)
-                ), init=0
-            ) +
-            sum(
-                real.(get_base_voltage.(get_bus.(get_components(x -> get_bus(x) == l, FixedAdmittance, sys)))
-                    .^ 2 .* get_Y.(get_components(x -> get_bus(x) == l, FixedAdmittance, sys))), init=0
-            )) / total_load for l in load_buses
-    ])
-    return ldf
+    bus_loads = Dict(zip(get_name.(load_buses), zeros(length(load_buses))))
+    all_loads =
+        get_components(x -> get_available(x) && get_bus(x) ∈ load_buses, LOAD_TYPES, sys)
+    total_load = sum(get_peak_load.(all_loads))
+    for ld in all_loads
+        bus_loads[get_name(get_bus(ld))] += get_peak_load(ld) / total_load
+    end
+    return bus_loads
 end
 
 function find_interface_limits(
@@ -382,11 +456,13 @@ function find_interface_limits(
     #load_buses = find_load_buses(sys, neighbors)
 
     # Line hops:
-    in_branches, bus_neighbors = find_neighbor_lines(sys, interface_key, branch_filter, hops)
+    in_branches, bus_neighbors =
+        find_neighbor_lines(sys, interface_key, branch_filter, hops)
     gen_buses = find_gen_buses(sys, bus_neighbors)
     load_buses = find_load_buses(sys, bus_neighbors)
 
-    inames = join.(vcat(interface_key, reverse(interface_key)), "_")
+    roundtrip_ikey = vcat(interface_key, reverse(interface_key))
+    inames = join.(roundtrip_ikey, "_")
 
     # Build a JuMP Model
     m = direct_model(solver)
@@ -431,11 +507,10 @@ function find_interface_limits(
         :transfer_limit => interface_lims.data,
     )
 
-    interface_cap = DataFrame(
-        :interface => inames,
-        :sum_capacity => ones(2) .* sum(get_rate.(interface)),
-    )
-    @show df = leftjoin(df, interface_cap, on = :interface)
+    flow_lims = map(x -> sum(get_directional_flow_lim.(interface, x)), roundtrip_ikey)
+
+    interface_cap = DataFrame(:interface => inames, :sum_capacity => flow_lims)
+    df = leftjoin(df, interface_cap, on = :interface)
     return df
 end
 
