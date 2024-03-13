@@ -6,15 +6,54 @@ using DataFrames
 using PowerNetworkMatrices
 
 export find_interface_limits
-export find_sparse_interface_limits
-export find_interfaces
-export find_neighbor_interfaces
-export find_monolithic_interface_limits
-export find_neighbor_lines
 export optimizer_with_attributes
+export Security
 
+const PSY = PowerSystems
 const LOAD_TYPES = ElectricLoad #for NAERM analysis
+const HVDC_TYPES = Union{TwoTerminalHVDCLine,TwoTerminalVSCDCLine}
 # const LOAD_TYPES = Union{InterruptiblePowerLoad,StaticLoad}
+
+"""
+mutable struct Security
+    contingency_branches::PowerSystems.InfrastructureSystems.FlattenIteratorWrapper{ACBranch}
+    lodf::VirtualLODF
+end
+
+Struct to define security modeling data for interface transfer limit calculations.
+
+
+"""
+mutable struct Security
+    "Iterator containing branches to be included in security constraints"
+    contingency_branches::PSY.IS.FlattenIteratorWrapper{ACBranch}
+    "Line outage distribution factor matrix"
+    lodf::VirtualLODF
+end
+
+"""
+Function to create `Security` struct with default values
+"""
+function Security(sys::System)
+    return Security(get_available_components(ACBranch, sys), VirtualLODF(sys))
+end
+
+"""
+Function to create `Security` struct with default LODF matrix
+"""
+function Security(
+    sys::System,
+    contingency_branches::PSY.IS.FlattenIteratorWrapper{ACBranch},
+)
+    return Security(contingency_branches, VirtualLodf(sys))
+end
+
+"""
+Function to create `Security` struct with default contingency branches (all branches included)
+"""
+function Security(sys::System, lodf::VirtualLODF)
+    return Security(get_available_components(Branch, sys), lodf)
+end
 
 function find_interfaces(sys::System, branch_filter = x -> get_available(x))
     interfaces = Dict{Set,Vector{ACBranch}}()
@@ -105,7 +144,11 @@ function find_neighbor_interfaces(
     return neighbors
 end
 
-function find_injector_type(gen_buses, load_buses, hvdc_buses)
+function find_injector_type(
+    gen_buses::Set{ACBus},
+    load_buses::Set{ACBus},
+    hvdc_buses::Set{ACBus},
+)
     injector_type = Dict{ACBus,Type{<:StaticInjection}}()
     for bus in union(gen_buses, load_buses)
         if bus in intersect(gen_buses, load_buses)
@@ -176,14 +219,13 @@ function add_injector_constraint!( # for buses that have generators only
 end
 
 function add_variables!(
-    m,
-    inames,
-    in_branches,
-    gen_buses,
-    load_buses,
-    security,
-    c_branches, #must not be nothing if security = true
-    enforce_load_distribution,
+    m::Model,
+    inames::Vector{String},
+    in_branches::Vector{ACBranch},
+    gen_buses::Set,#PSY.FlattenIteratorWrapper{Bus},
+    load_buses::Set,# PSY.FlattenIteratorWrapper{Bus},
+    security::Security,
+    enforce_load_distribution::Bool,
 )
     # create flow variables for branches
     @variable(m, F[inames, get_name.(in_branches)])
@@ -194,9 +236,15 @@ function add_variables!(
         @variable(m, L, upper_bound = 0.0)
         vars["load"] = L
     end
-    if security
-        isnothing(c_branches) && error("c_branches must be defined")
-        @variable(m, CF[inames, get_name.(c_branches), get_name.(c_branches)])
+    if !isnothing(security)
+        @variable(
+            m,
+            CF[
+                inames,
+                get_name.(security.contingency_branches),
+                get_name.(security.contingency_branches),
+            ]
+        )
         vars["cont_flow"] = CF
     end
 
@@ -235,7 +283,7 @@ function find_hvdc_buses(sys::System)
     dc_br = get_available_components(TwoTerminalHVDCLine, sys)
     from_b = get_from.(get_arc.(dc_br))
     to_b = get_to.(get_arc.(dc_br))
-    return union(from_b, to_b)
+    return Set{ACBus}(union(from_b, to_b))
 end
 
 function get_hvdc_inj(b, iname, F)
@@ -254,8 +302,6 @@ function add_constraints!(
     in_branches,
     ptdf,
     security,
-    lodf,
-    c_branches, #must not be nothing if security = true
     sys,
     enforce_gen_limits,
     enforce_load_distribution,
@@ -268,7 +314,7 @@ function add_constraints!(
         ldf = find_ldfs(sys, load_buses)
     end
 
-    if security
+    if !isnothing(security)
         CF = vars["cont_flow"]
     end
 
@@ -293,19 +339,20 @@ function add_constraints!(
             push!(ptdf_expr, 0.0)
             @constraint(m, F[iname, name] == sum(ptdf_expr))
             # OutageFlowX = PreOutageFlowX + LODFx,y* PreOutageFlowY
-            if security
-                isnothing(lodf) && error("lodf must be defined")
-                if br in c_branches
-                    for cbr in c_branches
-                        cname = get_name(cbr)
-                        @constraint(m, CF[iname, name, cname] >= flow_lims.reverse)
-                        @constraint(m, CF[iname, name, cname] <= flow_lims.forward)
-                        @constraint(
-                            m,
-                            CF[iname, name, cname] ==
-                            F[iname, name] + lodf[name, cname] * F[iname, cname]
-                        )
-                    end
+            if !isnothing(security) && br in security.contingency_branches
+                c_branches = setdiff(
+                    intersect(security.contingency_branches, in_branches),
+                    get_components(HVDC_TYPES, sys),
+                )
+                for cbr in c_branches
+                    cname = get_name(cbr)
+                    @constraint(m, CF[iname, name, cname] >= flow_lims.reverse)
+                    @constraint(m, CF[iname, name, cname] <= flow_lims.forward)
+                    @constraint(
+                        m,
+                        CF[iname, name, cname] ==
+                        F[iname, name] + security.lodf[name, cname] * F[iname, cname]
+                    )
                 end
             end
         end
@@ -426,21 +473,108 @@ function find_ldfs(sys, load_buses)
     return bus_loads
 end
 
+"""
+Calculates the bi-directional interface transfer limits for each interface in a `System`.
+
+# Arguments
+
+- `sys::System` : PowerSystems System data
+- `solver::JuMP.MOI.OptimizerWithAttributes` : Solver
+- `interface_key::Pair{String, String}` :  key to select single interface (optional arg to run calculation for single interface)
+- `interface::Vector{ACBranch}` : vector of branches included in interface (optional arg to run calculation for single interface)
+- `interfaces::Dict{Pair{String, String}, Vector{ACBranch}}` : dict of all interfaces (optional arg to run calculation for single interface)
+
+# Keyword Arguments
+
+- `branch_filter::Function = x -> get_available(x)` : generic function to filter branches to be included in transfer limit calculation
+- `ptdf::VirtualPTDF = VirtualPTDF(sys),` : power transfer distribution factor matrix
+- `security::Union{Bool, Security} = false` : enforce n-1 transmission security constraints
+- `enforce_gen_limits::Bool = false` : enforce generator capacity limits defined by available generators in System
+- `enforce_load_distribution::Bool = false` : enforce constant load distribution factor constraints
+- `hops::Int = 3` : topological distance to include neighboring (outside of interface regions) transmission lines in interface transfer limit calculations
+
+# Examples
+
+```julia
+using InterfaceLimits
+using PowerSystems
+using HiGHS
+solver = optimizer_with_attributes(HiGHS.Optimizer)
+sys = System("matpower_file_path.m")
+interface_lims = find_interface_limits(sys, solver);
+
+# enforce generator capacity limits and load distribution factors
+interface_lims = find_interface_limits(sys, solver, enforce_gen_limits = true, enforce load_distribution = true);
+
+# n-1 interface limits
+interface_lims = find_interface_limits(sys, solver, security = true);
+
+# omit lines below 230kV from calculation
+bf = x -> get_available(x) && all(get_base_voltage.([get_from(get_arc(x)), get_to(get_arc(x))]) .>= 230.0)
+interface_lims = find_interface_limits(sys, solver, branch_filter = bf);
+
+# single interface calculation
+interfaces = InterfaceLimits.find_interfaces(sys)
+interface_key = first(collect(keys(interfaces)))
+interface = interfaces[interface_key]
+interface_lims = find_interface_limits(sys, solver, interface_key, interface, interfaces);
+```
+"""
+
 function find_interface_limits(
     sys::System,
-    solver,
-    interface_key,
-    interface,
-    interfaces;
-    branch_filter = x -> get_available(x),
-    ptdf = VirtualPTDF(sys),
-    lodf = nothing,
-    c_branches = nothing,
-    security = false, # n-1 security
-    enforce_gen_limits = false,
-    enforce_load_distribution = false,
-    hops = 3, # neighboring areas to include
+    solver::JuMP.MOI.OptimizerWithAttributes;
+    branch_filter::Function = x -> get_available(x),
+    ptdf::VirtualPTDF = VirtualPTDF(sys),
+    security::Union{Bool,Security} = false,
+    enforce_gen_limits::Bool = false,
+    enforce_load_distribution::Bool = false,
+    hops::Int = 3,
 )
+
+    interfaces = find_interfaces(sys, branch_filter)
+    results_dfs = []
+
+    ik = 0
+    for (interface_key, interface) in interfaces
+        ik += 1
+        @info " $ik/$(length(interfaces)) Building interface limit optimization model " interface_key
+        df = find_interface_limits(
+            sys,
+            solver,
+            interface_key,
+            interface,
+            interfaces,
+            branch_filter = branch_filter,
+            ptdf = ptdf,
+            security = security,
+            enforce_gen_limits = enforce_gen_limits,
+            enforce_load_distribution = enforce_load_distribution,
+            hops = hops,
+        )
+        push!(results_dfs, df)
+    end
+
+    df = vcat(results_dfs...)
+
+    @info "Interface limits calculated" df
+    return df
+end
+
+function find_interface_limits(
+    sys::System,
+    solver::JuMP.MOI.OptimizerWithAttributes,
+    interface_key::Pair{String,String},
+    interface::Vector{ACBranch},
+    interfaces::Dict{Pair{String,String},Vector{ACBranch}};
+    branch_filter::Function = x -> get_available(x),
+    ptdf::VirtualPTDF = VirtualPTDF(sys),
+    security::Union{Bool,Security} = false,
+    enforce_gen_limits::Bool = false,
+    enforce_load_distribution::Bool = false,
+    hops::Int = 3,
+)
+    # TODO: Delete this and the `interfaces` argument
     # Region hops:
     #interface_neighbors = find_neighbor_interfaces(interfaces, hops)
     #neighbors = interface_neighbors[interface_key]
@@ -452,12 +586,11 @@ function find_interface_limits(
     #    ),
     #    collect(branches),
     #)
-    #gen_buses = find_gen_buses(sys, neighbors)
-    #load_buses = find_load_buses(sys, neighbors)
 
     # Line hops:
     in_branches, bus_neighbors =
         find_neighbor_lines(sys, interface_key, branch_filter, hops)
+
     gen_buses = find_gen_buses(sys, bus_neighbors)
     load_buses = find_load_buses(sys, bus_neighbors)
 
@@ -474,7 +607,6 @@ function find_interface_limits(
         gen_buses,
         load_buses,
         security,
-        c_branches,
         enforce_load_distribution,
     )
     add_constraints!(
@@ -487,8 +619,6 @@ function find_interface_limits(
         in_branches,
         ptdf,
         security,
-        lodf,
-        c_branches,
         sys,
         enforce_gen_limits,
         enforce_load_distribution,
@@ -513,124 +643,4 @@ function find_interface_limits(
     df = leftjoin(df, interface_cap, on = :interface)
     return df
 end
-
-function find_interface_limits(
-    sys::System,
-    solver;
-    branch_filter = x -> get_available(x),
-    ptdf = VirtualPTDF(sys),
-    lodf = nothing,
-    c_branches = nothing,
-    security = false, # n-1 security
-    enforce_gen_limits = false,
-    enforce_load_distribution = false,
-    hops = 3, # neighboring areas to include
-)
-
-    interfaces = find_interfaces(sys, branch_filter)
-    results_dfs = []
-
-    ik = 0
-    for (interface_key, interface) in interfaces
-        ik += 1
-        @info " $ik/$(length(interfaces)) Building interface limit optimization model " interface_key
-        df = find_interface_limits(
-            sys,
-            solver,
-            interface_key,
-            interface,
-            interfaces,
-            branch_filter = branch_filter,
-            ptdf = ptdf,
-            lodf = lodf,
-            c_branches = c_branches,
-            security = security,
-            enforce_gen_limits = enforce_gen_limits,
-            enforce_load_distribution = enforce_load_distribution,
-            hops = hops,
-        )
-        push!(results_dfs, df)
-    end
-
-    df = vcat(results_dfs...)
-
-    @info "Interface limits calculated" df
-    return df
-end
-
-function find_monolithic_interface_limits(
-    sys::System,
-    solver;
-    branch_filter = x -> get_available(x),
-    ptdf = VirtualPTDF(sys),
-    lodf = nothing,
-    c_branches = nothing,
-    security = false,
-    enforce_load_distribution = false,
-    enforce_gen_limits = false,
-)
-    # Build a JuMP Model
-    @info "Building interface limit optimization model"
-    m = direct_model(solver)
-
-    interfaces = find_interfaces(sys, branch_filter)
-    in_branches = get_components(branch_filter, ACBranch, sys) # could filter for monitored lines here
-    gen_buses = Set(get_bus.(get_components(get_available, Generator, sys)))
-    load_buses = Set(get_bus.(get_components(get_available, LOAD_TYPES, sys)))
-
-    inames = join.(vcat(collect(keys(interfaces)), reverse.(keys(interfaces))), "_")
-    vars = add_variables!(
-        m,
-        inames,
-        in_branches,
-        gen_buses,
-        load_buses,
-        security,
-        c_branches,
-        enforce_load_distribution,
-    )
-    for (interface_key, interface) in interfaces
-        add_constraints!(
-            m,
-            vars,
-            interface_key,
-            interface,
-            gen_buses,
-            load_buses,
-            in_branches,
-            ptdf,
-            security,
-            lodf,
-            c_branches,
-            sys,
-            enforce_gen_limits,
-            enforce_load_distribution,
-        )
-    end
-
-    # make max objective
-    @objective(m, Max, sum(vars["interface"]))
-
-    # solve the problem
-    @info "Solving interface limit problem with" solver
-    optimize!(m)
-
-    # return the interface values
-    interface_lims = value.(vars["interface"])
-    df = DataFrame(
-        :interface => interface_lims.axes[1],
-        :transfer_limit => interface_lims.data,
-    )
-
-    # add capacities to df
-    interface_cap = DataFrame(
-        :interface => inames,
-        :sum_capacity => repeat(sum.([get_rate.(br) for br in values(interfaces)]), 2),
-    )
-    df = leftjoin(df, interface_cap, on = :interface)
-
-    @info "Interface limits calculated" df
-    return df
-end
-
 end # module

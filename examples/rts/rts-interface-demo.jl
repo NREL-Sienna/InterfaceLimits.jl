@@ -25,10 +25,10 @@ set_units_base_system!(sys, "natural_units")
 
 lodf = VirtualLODF(sys, tol = 10e-3)
 @info "calculating n-1 interface limits"
-interface_lims = find_interface_limits(sys, solver, lodf = lodf, security = true);
+interface_lims = find_interface_limits(sys, solver, security = true);
 
 @info "calculating n-1 interface limits with single problem"
-interface_lims = find_monolithic_interface_limits(sys, solver, lodf = lodf, security = true)
+interface_lims = find_monolithic_interface_limits(sys, solver, security = true)
 
 
 @info "calculating n-0 interface limits for just 1 interface"
@@ -43,6 +43,5 @@ interface = interfaces[interface_key]
     interface_key,
     interface,
     interfaces,
-    lodf = lodf,
     security = true,
 );
