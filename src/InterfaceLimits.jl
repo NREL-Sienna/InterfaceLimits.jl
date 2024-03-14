@@ -55,16 +55,6 @@ function Security(sys::System, lodf::VirtualLODF)
     return Security(get_available_components(Branch, sys), lodf)
 end
 
-"""
-Function to create `Security` struct with custom values
-"""
-function Security(
-    contingency_branches::PSY.IS.FlattenIteratorWrapper{ACBranch},
-    lodf::VirtualLODF,
-)
-    return Security(contingency_branches, lodf)
-end
-
 function find_interfaces(sys::System, branch_filter = x -> get_available(x))
     interfaces = Dict{Set,Vector{ACBranch}}()
     for br in get_components(branch_filter, ACBranch, sys)
