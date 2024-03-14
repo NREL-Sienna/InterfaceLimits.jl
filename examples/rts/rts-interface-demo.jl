@@ -20,15 +20,9 @@ set_units_base_system!(sys, "natural_units")
 @time interface_lims =
     find_interface_limits(sys, solver, ptdf = VirtualPTDF(sys, tol = 10e-3))
 
-@info "calculating n-0 interface limits with single problem"
-@time interface_lims = find_monolithic_interface_limits(sys, solver);
-
 lodf = VirtualLODF(sys, tol = 10e-3)
 @info "calculating n-1 interface limits"
 interface_lims = find_interface_limits(sys, solver, security = true);
-
-@info "calculating n-1 interface limits with single problem"
-interface_lims = find_monolithic_interface_limits(sys, solver, security = true)
 
 
 @info "calculating n-0 interface limits for just 1 interface"

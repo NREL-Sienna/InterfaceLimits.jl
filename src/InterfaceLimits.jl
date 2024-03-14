@@ -55,6 +55,16 @@ function Security(sys::System, lodf::VirtualLODF)
     return Security(get_available_components(Branch, sys), lodf)
 end
 
+"""
+Function to create `Security` struct with custom values
+"""
+function Security(
+    contingency_branches::PSY.IS.FlattenIteratorWrapper{ACBranch},
+    lodf::VirtualLODF,
+)
+    return Security(contingency_branches, lodf)
+end
+
 function find_interfaces(sys::System, branch_filter = x -> get_available(x))
     interfaces = Dict{Set,Vector{ACBranch}}()
     for br in get_components(branch_filter, ACBranch, sys)
@@ -150,7 +160,7 @@ function find_injector_type(
     hvdc_buses::Set{ACBus},
 )
     injector_type = Dict{ACBus,Type{<:StaticInjection}}()
-    for bus in union(gen_buses, load_buses)
+    for bus in union(gen_buses, load_buses, hvdc_buses)
         if bus in intersect(gen_buses, load_buses)
             injector_type[bus] = StaticInjection
         elseif bus in gen_buses
@@ -207,7 +217,7 @@ function add_injector_constraint!( # for buses that have generators only
     !isnothing(max_gen) && @constraint(m, p_var - hvdc_inj <= max_gen)
 end
 
-function add_injector_constraint!( # for buses that have generators only
+function add_injector_constraint!( # for buses that have converters only
     m::Model,
     injector_type::Type{InterconnectingConverter},
     p_var, #injection variable,
@@ -287,8 +297,14 @@ function find_hvdc_buses(sys::System)
 end
 
 function get_hvdc_inj(b, iname, F)
-    b ∉ axes(F)[2] && return 0.0
-    return F[iname, b]
+    dc_brs = get_components( 
+        x -> (
+            get_from(get_arc(x)) == b || get_to(get_arc(x)) == b
+         ),
+         TwoTerminalHVDCLine, sys)
+    length(dc_brs) == 0 && return 0.0
+    # figure out what to do if more than one TwoTerminalHVDCLine
+    return F[iname, get_name(first(dc_brs))]
 end
 
 
