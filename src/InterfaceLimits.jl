@@ -234,7 +234,7 @@ function add_variables!(
     in_branches::Vector{ACBranch},
     gen_buses::Set,#PSY.FlattenIteratorWrapper{Bus},
     load_buses::Set,# PSY.FlattenIteratorWrapper{Bus},
-    security::Security,
+    security::Union{Bool, Security},
     enforce_load_distribution::Bool,
 )
     # create flow variables for branches
@@ -246,7 +246,7 @@ function add_variables!(
         @variable(m, L, upper_bound = 0.0)
         vars["load"] = L
     end
-    if !isnothing(security)
+    if isa(security, Security)
         @variable(
             m,
             CF[
@@ -330,7 +330,7 @@ function add_constraints!(
         ldf = find_ldfs(sys, load_buses)
     end
 
-    if !isnothing(security)
+    if isa(security, Security)
         CF = vars["cont_flow"]
     end
 
@@ -355,7 +355,7 @@ function add_constraints!(
             push!(ptdf_expr, 0.0)
             @constraint(m, F[iname, name] == sum(ptdf_expr))
             # OutageFlowX = PreOutageFlowX + LODFx,y* PreOutageFlowY
-            if !isnothing(security) && br in security.contingency_branches
+            if isa(security, Security) && br in security.contingency_branches
                 c_branches = setdiff(
                     intersect(security.contingency_branches, in_branches),
                     get_components(HVDC_TYPES, sys),
@@ -602,6 +602,10 @@ function find_interface_limits(
     #    ),
     #    collect(branches),
     #)
+
+    if security == true
+        security = Security(sys)
+    end
 
     # Line hops:
     in_branches, bus_neighbors =
