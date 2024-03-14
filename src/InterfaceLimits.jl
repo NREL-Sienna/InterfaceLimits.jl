@@ -286,7 +286,7 @@ function find_hvdc_buses(sys::System)
     return Set{ACBus}(union(from_b, to_b))
 end
 
-function get_hvdc_inj(b, iname, F)
+function get_hvdc_inj(b, iname, F, sys)
     dc_brs = get_components( 
         x -> (
             get_from(get_arc(x)) == b || get_to(get_arc(x)) == b
@@ -382,7 +382,7 @@ function add_constraints!(
                 max_gen = nothing
             end
 
-            hvdc_inj = get_hvdc_inj(b, iname, F)
+            hvdc_inj = get_hvdc_inj(b, iname, F, sys)
 
             add_injector_constraint!(
                 m,
