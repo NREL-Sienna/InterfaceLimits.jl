@@ -207,7 +207,7 @@ function add_injector_constraint!( # for buses that have generators only
     !isnothing(max_gen) && @constraint(m, p_var - hvdc_inj <= max_gen)
 end
 
-function add_injector_constraint!( # for buses that have converters only
+function add_injector_constraint!( # for TwoTerminalHVDCLine buses with no gens or loads
     m::Model,
     injector_type::Type{InterconnectingConverter},
     p_var, #injection variable,
@@ -224,13 +224,14 @@ function add_variables!(
     in_branches::Vector{ACBranch},
     gen_buses::Set,#PSY.FlattenIteratorWrapper{Bus},
     load_buses::Set,# PSY.FlattenIteratorWrapper{Bus},
+    hvdc_buses::Set,# PSY.FlattenIteratorWrapper{Bus},
     security::Union{Bool, Security},
     enforce_load_distribution::Bool,
 )
     # create flow variables for branches
     @variable(m, F[inames, get_name.(in_branches)])
     @variable(m, I[inames])
-    @variable(m, P[inames, get_name.(union(gen_buses, load_buses))])
+    @variable(m, P[inames, get_name.(union(gen_buses, load_buses, hvdc_buses))])
     vars = Dict{String,Any}("flow" => F, "interface" => I, "injection" => P)
     if enforce_load_distribution
         @variable(m, L, upper_bound = 0.0)
@@ -287,14 +288,20 @@ function find_hvdc_buses(sys::System)
 end
 
 function get_hvdc_inj(b, iname, F, sys)
-    dc_brs = get_components( 
+    dc_brs_from = get_components( 
         x -> (
-            get_from(get_arc(x)) == b || get_to(get_arc(x)) == b
-         ),
-         TwoTerminalHVDCLine, sys)
-    length(dc_brs) == 0 && return 0.0
-    # figure out what to do if more than one TwoTerminalHVDCLine
-    return F[iname, get_name(first(dc_brs))]
+            get_from(get_arc(x)) == b
+        ),
+        TwoTerminalHVDCLine, sys)
+    dc_brs_to = get_components( 
+        x -> (
+            get_to(get_arc(x)) == b
+        ),
+        TwoTerminalHVDCLine, sys)    
+    hvdc_inj = 0.0
+    length(dc_brs_from) > 0 && (hvdc_inj -= sum(F[iname,get_name.(dc_brs_from)]))
+    length(dc_brs_to) > 0 && (hvdc_inj += sum(F[iname,get_name.(dc_brs_to)]))
+    return hvdc_inj
 end
 
 
@@ -305,6 +312,7 @@ function add_constraints!(
     interface,
     gen_buses,
     load_buses,
+    hvdc_buses,
     in_branches,
     ptdf,
     security,
@@ -324,7 +332,6 @@ function add_constraints!(
         CF = vars["cont_flow"]
     end
 
-    hvdc_buses = find_hvdc_buses(sys)
     injector_types = find_injector_type(gen_buses, load_buses, hvdc_buses)
 
     for ikey in [interface_key, reverse(interface_key)]
@@ -396,7 +403,7 @@ function add_constraints!(
 
         @constraint(
             m,
-            I[iname] ==
+            I[iname] == 
             sum(F[iname, get_name(br)] * line_direction(br, ikey) for br in interface)
         )
     end
@@ -550,7 +557,6 @@ function find_interface_limits(
             solver,
             interface_key,
             interface,
-            interfaces,
             branch_filter = branch_filter,
             ptdf = ptdf,
             security = security,
@@ -571,8 +577,7 @@ function find_interface_limits(
     sys::System,
     solver::JuMP.MOI.OptimizerWithAttributes,
     interface_key::Pair{String,String},
-    interface::Vector{ACBranch},
-    interfaces::Dict{Pair{String,String},Vector{ACBranch}};
+    interface::Vector{ACBranch};
     branch_filter::Function = x -> get_available(x),
     ptdf::VirtualPTDF = VirtualPTDF(sys),
     security::Union{Bool,Security} = false,
@@ -580,19 +585,6 @@ function find_interface_limits(
     enforce_load_distribution::Bool = false,
     hops::Int = 3,
 )
-    # TODO: Delete this and the `interfaces` argument
-    # Region hops:
-    #interface_neighbors = find_neighbor_interfaces(interfaces, hops)
-    #neighbors = interface_neighbors[interface_key]
-    #branches = get_components(branch_filter, ACBranch, sys) # could filter for monitored lines here
-    #in_branches = filter(
-    #    x -> (
-    #        get_name(get_area(get_from(get_arc(x)))) ∈ neighbors ||
-    #        get_name(get_area(get_to(get_arc(x)))) ∈ neighbors
-    #    ),
-    #    collect(branches),
-    #)
-
     if security == true
         security = Security(sys)
     end
@@ -603,6 +595,7 @@ function find_interface_limits(
 
     gen_buses = find_gen_buses(sys, bus_neighbors)
     load_buses = find_load_buses(sys, bus_neighbors)
+    hvdc_buses = find_hvdc_buses(sys)
 
     roundtrip_ikey = vcat(interface_key, reverse(interface_key))
     inames = join.(roundtrip_ikey, "_")
@@ -616,6 +609,7 @@ function find_interface_limits(
         in_branches,
         gen_buses,
         load_buses,
+        hvdc_buses,
         security,
         enforce_load_distribution,
     )
@@ -626,6 +620,7 @@ function find_interface_limits(
         interface,
         gen_buses,
         load_buses,
+        hvdc_buses,
         in_branches,
         ptdf,
         security,
