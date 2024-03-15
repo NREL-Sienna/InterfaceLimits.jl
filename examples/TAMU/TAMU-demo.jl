@@ -24,6 +24,3 @@ bf =
             get_base_voltage(get_to(get_arc(x))) >= v
 
 @time interface_lims = find_interface_limits(sys, solver, branch_filter = bf)
-
-@time monolithic_interface_lims =
-    find_monolithic_interface_limits(sys, solver, branch_filter = bf)
