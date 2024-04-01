@@ -45,7 +45,7 @@ function Security(
     sys::System,
     contingency_branches::PSY.IS.FlattenIteratorWrapper{ACBranch},
 )
-    return Security(contingency_branches, VirtualLodf(sys))
+    return Security(contingency_branches, VirtualLODF(sys))
 end
 
 """
@@ -585,13 +585,13 @@ function find_interface_limits(
     enforce_load_distribution::Bool = false,
     hops::Int = 3,
 )
-    if security == true
-        security = Security(sys)
-    end
-
     # Line hops:
     in_branches, bus_neighbors =
         find_neighbor_lines(sys, interface_key, branch_filter, hops)
+
+    if security == true
+        security = Security(sys, get_components(x->(x ∈ in_branches),ACBranch,sys))
+    end
 
     gen_buses = find_gen_buses(sys, bus_neighbors)
     load_buses = find_load_buses(sys, bus_neighbors)
