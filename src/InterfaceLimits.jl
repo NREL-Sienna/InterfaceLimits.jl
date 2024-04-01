@@ -280,11 +280,11 @@ function get_directional_flow_lim(br::ACBranch, ikey::Pair{String,String})
     return lim
 end
 
-function find_hvdc_buses(sys::System)
+function find_hvdc_buses(sys::System, bus_neighbors)
     dc_br = get_available_components(TwoTerminalHVDCLine, sys)
     from_b = get_from.(get_arc.(dc_br))
     to_b = get_to.(get_arc.(dc_br))
-    return Set{ACBus}(union(from_b, to_b))
+    return Set{ACBus}(intersect(union(from_b, to_b),bus_neighbors))
 end
 
 function get_hvdc_inj(b, iname, F, sys)
@@ -595,7 +595,7 @@ function find_interface_limits(
 
     gen_buses = find_gen_buses(sys, bus_neighbors)
     load_buses = find_load_buses(sys, bus_neighbors)
-    hvdc_buses = find_hvdc_buses(sys)
+    hvdc_buses = find_hvdc_buses(sys, bus_neighbors)
 
     roundtrip_ikey = vcat(interface_key, reverse(interface_key))
     inames = join.(roundtrip_ikey, "_")
