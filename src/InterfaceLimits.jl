@@ -411,16 +411,9 @@ end
 
 function ensure_injector!(inj_buses, bus_neighbors, bustype, sys)
     !isempty(inj_buses) && return # only add an injector if set is empty
-    #Line hops:
+    
     inj_buses =
         get_components(x -> (x ∈ bus_neighbors) && (get_bustype(x) == bustype), Bus, sys)
-
-    #Region hops:
-    #inj_buses = get_components(
-    #    x -> (get_name(get_area(x)) ∈ bus_neighbors) && (get_bustype(x) == bustype),
-    #    Bus,
-    #    sys,
-    #)
 
     if isempty(inj_buses)
         @warn("No no neighboring $bustype buses")
@@ -429,24 +422,16 @@ function ensure_injector!(inj_buses, bus_neighbors, bustype, sys)
 end
 
 function find_gen_buses(sys, bus_neighbors)
-    # Line hops:
     gen_buses = filter(
         x -> x ∈ bus_neighbors,
         Set(get_bus.(get_available_components(Generator, sys))),
     )
-
-    # Region hops:
-    #gen_buses = filter(
-    #    x -> get_name(get_area(x)) ∈ bus_neighbors,
-    #    Set(get_bus.(get_components(Generator, sys))),
-    #)
 
     ensure_injector!(gen_buses, bus_neighbors, ACBusTypes.PV, sys)
     return gen_buses
 end
 
 function find_load_buses(sys, bus_neighbors)
-    # Line hops:
     load_buses = Set(
         get_bus.(
             get_components(
@@ -456,12 +441,6 @@ function find_load_buses(sys, bus_neighbors)
             )
         ),
     )
-
-    # Region hops:
-    #load_buses = filter(
-    #    x -> get_name(get_area(x)) ∈ bus_neighbors,
-    #    Set(get_bus.(get_components(LOAD_TYPES, sys))),
-    #)
 
     ensure_injector!(load_buses, bus_neighbors, ACBusTypes.PQ, sys)
     return load_buses
@@ -585,7 +564,6 @@ function find_interface_limits(
     enforce_load_distribution::Bool = false,
     hops::Int = 3,
 )
-    # Line hops:
     in_branches, bus_neighbors =
         find_neighbor_lines(sys, interface_key, branch_filter, hops)
 
