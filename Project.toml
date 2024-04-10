@@ -9,9 +9,9 @@ JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
 PowerNetworkMatrices = "bed98974-b02a-5e2f-9fe0-a103f5c450dd"
 PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
 
-[compat]
-DataFrames = "1"
-JuMP = "1"
-PowerNetworkMatrices = "^0.7.1"
-PowerSystems = "^2.2"
-julia = "1"
+# [compat]
+# DataFrames = "1"
+# JuMP = "1"
+# PowerNetworkMatrices = "^0.7.1"
+# PowerSystems = "^2.2"
+# julia = "1"
