@@ -26,16 +26,15 @@ interface_lims = find_interface_limits(sys, solver, security = true);
 
 
 @info "calculating n-0 interface limits for just 1 interface"
-interfaces = find_interfaces(sys)
+interfaces = InterfaceLimits.find_interfaces(sys)
 interface_key = first(collect(keys(interfaces)))
 interface = interfaces[interface_key]
 @time interface_lims =
-    find_interface_limits(sys, solver, interface_key, interface, interfaces);
+    find_interface_limits(sys, solver, interface_key, interface);
 @time interface_lims = find_interface_limits(
     sys,
     solver,
     interface_key,
     interface,
-    interfaces,
     security = true,
 );
