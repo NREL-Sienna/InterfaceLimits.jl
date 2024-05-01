@@ -8,6 +8,7 @@ using PowerNetworkMatrices
 export find_interface_limits
 export optimizer_with_attributes
 export Security
+export InjectionLimits
 
 const PSY = PowerSystems
 const LOAD_TYPES = ElectricLoad #for NAERM analysis
@@ -54,6 +55,54 @@ Function to create `Security` struct with default contingency branches (all bran
 function Security(sys::System, lodf::VirtualLODF)
     return Security(get_available_components(Branch, sys), lodf)
 end
+
+"""
+mutable struct InjectionLimits
+    genbus_upper_bound::Float64
+    loadbus_bounds::Tuple{Float64,Float64}
+    enforce_ldfs::Bool
+end
+
+Struct to define injection limits at generation and load buses for interface transfer limit calculations.
+
+
+"""
+mutable struct InjectionLimits
+    "Constrains max generation as a multiple of existing generation capacity. Must be greater than 0"
+    genbus_upper_bound::Float64
+    "(Lower, Upper) injection bounds for load buses as a multiple of nominal load at each bus. 
+    The upper bound must be positive (maximum power withdrawal) while the lower bound may be 
+    positive (minimum power withdrawal) or negative (allows new generation as a multiple of nominal load)."
+    loadbus_bounds::Tuple{Float64, Float64}
+    "If true, constrains load buses to nominal load distribution factors."
+    enforce_ldfs::Bool 
+
+    function InjectionLimits(genbus_upper_bound, loadbus_bounds, enforce_ldfs)
+        (genbus_upper_bound <= 0.0) && throw(ArgumentError("genbus_upper_bound must be greater than 0"))
+        (loadbus_bounds[1] > loadbus_bounds[2]) && throw(ArgumentError("lower load bound must be less than upper load bound"))
+        (loadbus_bounds[2] <= 0.0) && throw(ArgumentError("upper load bound must be greater than 0"))
+        if (loadbus_bounds[1] < 0.0) && enforce_ldfs
+            @warn("enforce_ldfs and loadbus_bounds[1] < 0 cannot exist together. loadbus_bounds[1] will be set to 0.0.")
+            loadbus_bounds = (0.0, loadbus_bounds[2])
+        end
+        new(genbus_upper_bound, loadbus_bounds, enforce_ldfs)
+    end
+end
+
+"""
+Function to create `InjectionLimits` struct with default values or allow users to specify values as kwargs
+"""
+# TODO: Keep this distinct function to also allow the creation of InjectionLimits without providing kwargs 
+# or combine this into the inner constructor and only enable calling InjectionLimits if kwargs are provided?
+
+function InjectionLimits(;
+    genbus_upper_bound::Float64=1.0,
+    loadbus_bounds::Tuple{Float64, Float64}=(0.0, 1.0),
+    enforce_ldfs::Bool = false
+)
+    return InjectionLimits(genbus_upper_bound, loadbus_bounds, enforce_ldfs)
+end
+
 
 function find_interfaces(sys::System, branch_filter = x -> get_available(x))
     interfaces = Dict{Set,Vector{ACBranch}}()
@@ -164,34 +213,51 @@ function find_injector_type(
     return injector_type
 end
 
-function add_injector_constraint!( # for buses that have loads and generators
+function add_injector_constraint!( # for buses that have loads and generators and enforce_ldfs==true
     m::Model,
     injector_type::Type{StaticInjection},
     p_var, #injection variable,
-    hvdc_inj;
-    ldf_lim = nothing,
-    max_gen = nothing, # pass this if enforce_gen_limits = true
+    hvdc_inj,
+    load_lim::JuMP.AffExpr,
+    max_gen,
 )
-    if !isnothing(ldf_lim)
-        @constraint(m, p_var - hvdc_inj >= ldf_lim)
-        !isnothing(max_gen) && (max_gen += ldf_lim)
-    end
-    !isnothing(max_gen) && @constraint(m, p_var - hvdc_inj <= max_gen)
+    @constraint(m, p_var - hvdc_inj >= load_lim)
+    @constraint(m, p_var - hvdc_inj <= max_gen + load_lim)
 end
 
-function add_injector_constraint!( # for buses that have loads only
+function add_injector_constraint!( # for buses that have loads and generators and enforce_ldfs==false
+    m::Model,
+    injector_type::Type{StaticInjection},
+    p_var, #injection variable,
+    hvdc_inj,
+    load_lim::Tuple{Float64,Float64},
+    max_gen,
+)
+    @constraint(m, p_var - hvdc_inj >= load_lim[2])
+    @constraint(m, p_var - hvdc_inj <= max_gen + load_lim[1])
+end
+
+function add_injector_constraint!( # for buses that have loads only and enforce_ldfs == true
     m::Model,
     injector_type::Type{ElectricLoad},
     p_var, #injection variable,
-    hvdc_inj;
-    ldf_lim = nothing,
-    max_gen = nothing, # pass this if enforce_gen_limits = true
+    hvdc_inj,
+    load_lim::JuMP.AffExpr,
+    max_gen,
 )
-    if !isnothing(ldf_lim)
-        @constraint(m, p_var - hvdc_inj == ldf_lim)
-    else
-        @constraint(m, p_var - hvdc_inj <= 0.0)
-    end
+    @constraint(m, p_var - hvdc_inj == load_lim)
+end
+
+function add_injector_constraint!( # for buses that have loads only and enforce_ldfs == false
+    m::Model,
+    injector_type::Type{ElectricLoad},
+    p_var, #injection variable,
+    hvdc_inj,
+    load_lim::Tuple{Float64,Float64},
+    max_gen,
+)
+    @constraint(m, p_var - hvdc_inj >= load_lim[2])
+    @constraint(m, p_var - hvdc_inj <= load_lim[1])
 
 end
 
@@ -199,21 +265,21 @@ function add_injector_constraint!( # for buses that have generators only
     m::Model,
     injector_type::Type{Generator},
     p_var, #injection variable,
-    hvdc_inj;
-    ldf_lim = nothing,
-    max_gen = nothing, # pass this if enforce_gen_limits = true
+    hvdc_inj,
+    load_lim,
+    max_gen, 
 )
     @constraint(m, p_var - hvdc_inj >= 0.0)
-    !isnothing(max_gen) && @constraint(m, p_var - hvdc_inj <= max_gen)
+    @constraint(m, p_var - hvdc_inj <= max_gen)
 end
 
 function add_injector_constraint!( # for TwoTerminalHVDCLine buses with no gens or loads
     m::Model,
     injector_type::Type{InterconnectingConverter},
     p_var, #injection variable,
-    hvdc_inj;
-    ldf_lim = nothing,
-    max_gen = nothing, # pass this if enforce_gen_limits = true
+    hvdc_inj,
+    load_lim,
+    max_gen,
 )
     @constraint(m, p_var - hvdc_inj == 0.0)
 end
@@ -226,15 +292,15 @@ function add_variables!(
     load_buses::Set,# PSY.FlattenIteratorWrapper{Bus},
     hvdc_buses::Set,# PSY.FlattenIteratorWrapper{Bus},
     security::Union{Bool, Security},
-    enforce_load_distribution::Bool,
+    injection_limits::InjectionLimits,
 )
     # create flow variables for branches
     @variable(m, F[inames, get_name.(in_branches)])
     @variable(m, I[inames])
     @variable(m, P[inames, get_name.(union(gen_buses, load_buses, hvdc_buses))])
     vars = Dict{String,Any}("flow" => F, "interface" => I, "injection" => P)
-    if enforce_load_distribution
-        @variable(m, L, upper_bound = 0.0)
+    if injection_limits.enforce_ldfs
+        @variable(m, L) # constrain later
         vars["load"] = L
     end
     if isa(security, Security)
@@ -317,15 +383,17 @@ function add_constraints!(
     ptdf,
     security,
     sys,
-    enforce_gen_limits,
-    enforce_load_distribution,
+    injection_limits,
 )
     F = vars["flow"]
     I = vars["interface"]
     P = vars["injection"]
-    if enforce_load_distribution
+
+    total_load, ldf = find_ldfs(sys, load_buses)
+    if injection_limits.enforce_ldfs
         L = vars["load"]
-        ldf = find_ldfs(sys, load_buses)
+        @constraint(m, L >= -injection_limits.loadbus_bounds[2] * total_load)
+        @constraint(m, L <= -injection_limits.loadbus_bounds[1] * total_load)
     end
 
     if isa(security, Security)
@@ -372,11 +440,20 @@ function add_constraints!(
 
         for b in union(gen_buses, load_buses, hvdc_buses)
             bus_name = get_name(b)
-            ldf_lim =
-                (enforce_load_distribution && (b in load_buses)) ? ldf[bus_name] * L :
-                nothing
-            if enforce_gen_limits && (b in gen_buses)
-                max_gen = sum(
+            load_lim = nothing
+            if b in load_buses
+                bus_ldf = ldf[bus_name]
+                if injection_limits.enforce_ldfs
+                    load_lim = bus_ldf * L
+                else
+                    bus_peak_load = -bus_ldf * total_load
+                    load_lim = (injection_limits.loadbus_bounds[1]*bus_peak_load, 
+                                injection_limits.loadbus_bounds[2]*bus_peak_load)
+                end
+            end
+            max_gen = nothing
+            if b in gen_buses
+                max_gen = injection_limits.genbus_upper_bound * sum(
                     get_max_active_power.(
                         get_components(
                             x -> get_available(x) && get_bus(x) == b,
@@ -385,8 +462,6 @@ function add_constraints!(
                         )
                     ),
                 )
-            else
-                max_gen = nothing
             end
 
             hvdc_inj = get_hvdc_inj(b, iname, F, sys)
@@ -396,8 +471,8 @@ function add_constraints!(
                 injector_types[b],
                 P[iname, bus_name],
                 hvdc_inj,
-                ldf_lim = ldf_lim,
-                max_gen = max_gen,
+                load_lim,
+                max_gen,
             )
         end
 
@@ -462,7 +537,7 @@ function find_ldfs(sys, load_buses)
     for ld in all_loads
         bus_loads[get_name(get_bus(ld))] += get_peak_load(ld) / total_load
     end
-    return bus_loads
+    return total_load, bus_loads
 end
 
 """
@@ -481,6 +556,7 @@ Calculates the bi-directional interface transfer limits for each interface in a 
 - `branch_filter::Function = x -> get_available(x)` : generic function to filter branches to be included in transfer limit calculation
 - `ptdf::VirtualPTDF = VirtualPTDF(sys),` : power transfer distribution factor matrix
 - `security::Union{Bool, Security} = false` : enforce n-1 transmission security constraints
+- `injection_limits::InjectionLimits = InjectionLimits()` : constrain generation and load injections
 - `enforce_gen_limits::Bool = false` : enforce generator capacity limits defined by available generators in System
 - `enforce_load_distribution::Bool = false` : enforce constant load distribution factor constraints
 - `hops::Int = 3` : topological distance to include neighboring (outside of interface regions) transmission lines in interface transfer limit calculations
@@ -495,8 +571,8 @@ solver = optimizer_with_attributes(HiGHS.Optimizer)
 sys = System("matpower_file_path.m")
 interface_lims = find_interface_limits(sys, solver);
 
-# enforce generator capacity limits and load distribution factors
-interface_lims = find_interface_limits(sys, solver, enforce_gen_limits = true, enforce load_distribution = true);
+# enforce load distribution factors
+interface_lims = find_interface_limits(sys, solver, injection_limits=InjectionLimits(enforce_ldfs=true));
 
 # n-1 interface limits
 interface_lims = find_interface_limits(sys, solver, security = true);
@@ -519,8 +595,7 @@ function find_interface_limits(
     branch_filter::Function = x -> get_available(x),
     ptdf::VirtualPTDF = VirtualPTDF(sys),
     security::Union{Bool,Security} = false,
-    enforce_gen_limits::Bool = false,
-    enforce_load_distribution::Bool = false,
+    injection_limits::InjectionLimits = InjectionLimits(),
     hops::Int = 3,
 )
 
@@ -539,8 +614,7 @@ function find_interface_limits(
             branch_filter = branch_filter,
             ptdf = ptdf,
             security = security,
-            enforce_gen_limits = enforce_gen_limits,
-            enforce_load_distribution = enforce_load_distribution,
+            injection_limits = injection_limits,
             hops = hops,
         )
         push!(results_dfs, df)
@@ -560,8 +634,7 @@ function find_interface_limits(
     branch_filter::Function = x -> get_available(x),
     ptdf::VirtualPTDF = VirtualPTDF(sys),
     security::Union{Bool,Security} = false,
-    enforce_gen_limits::Bool = false,
-    enforce_load_distribution::Bool = false,
+    injection_limits::InjectionLimits = InjectionLimits(),
     hops::Int = 3,
 )
     in_branches, bus_neighbors =
@@ -589,7 +662,7 @@ function find_interface_limits(
         load_buses,
         hvdc_buses,
         security,
-        enforce_load_distribution,
+        injection_limits,
     )
     add_constraints!(
         m,
@@ -603,8 +676,7 @@ function find_interface_limits(
         ptdf,
         security,
         sys,
-        enforce_gen_limits,
-        enforce_load_distribution,
+        injection_limits,
     )
     # make max objective
     @objective(m, Max, sum(vars["interface"]))
