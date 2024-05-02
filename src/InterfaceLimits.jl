@@ -300,7 +300,7 @@ function add_variables!(
     @variable(m, P[inames, get_name.(union(gen_buses, load_buses, hvdc_buses))])
     vars = Dict{String,Any}("flow" => F, "interface" => I, "injection" => P)
     if injection_limits.enforce_ldfs
-        @variable(m, L) # constrain later
+        @variable(m, L[inames]) # constrain in add_constraints!
         vars["load"] = L
     end
     if isa(security, Security)
@@ -392,8 +392,8 @@ function add_constraints!(
     total_load, ldf = find_ldfs(sys, load_buses)
     if injection_limits.enforce_ldfs
         L = vars["load"]
-        @constraint(m, L >= -injection_limits.loadbus_bounds[2] * total_load)
-        @constraint(m, L <= -injection_limits.loadbus_bounds[1] * total_load)
+        @constraint(m, L .≥ -injection_limits.loadbus_bounds[2] * total_load)
+        @constraint(m, L .≤ -injection_limits.loadbus_bounds[1] * total_load)
     end
 
     if isa(security, Security)
@@ -444,7 +444,7 @@ function add_constraints!(
             if b in load_buses
                 bus_ldf = ldf[bus_name]
                 if injection_limits.enforce_ldfs
-                    load_lim = bus_ldf * L
+                    load_lim = bus_ldf * L[iname]
                 else
                     bus_peak_load = -bus_ldf * total_load
                     load_lim = (injection_limits.loadbus_bounds[1]*bus_peak_load, 
