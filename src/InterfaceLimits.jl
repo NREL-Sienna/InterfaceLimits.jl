@@ -522,11 +522,11 @@ function find_load_buses(sys, bus_neighbors)
 end
 
 function get_peak_load(load::ElectricLoad)
-    return get_max_active_power(load)
+    return max(0.0, get_max_active_power(load))
 end
 
 function get_peak_load(load::FixedAdmittance)
-    return real(get_base_voltage(get_bus(load))^2 * get_Y(load))
+    return max(0.0, real(get_base_voltage(get_bus(load))^2 * get_Y(load)))
 end
 
 function find_ldfs(sys, load_buses)
@@ -653,7 +653,7 @@ function find_interface_limits(
     inames = join.(roundtrip_ikey, "_")
 
     # Build a JuMP Model
-    m = direct_model(solver)
+    m = Model(solver)
     # set_attribute(m, "BarHomogeneous", 1)
     vars = add_variables!(
         m,
