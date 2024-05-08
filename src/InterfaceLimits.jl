@@ -636,6 +636,7 @@ function find_interface_limits(
     security::Union{Bool,Security} = false,
     injection_limits::InjectionLimits = InjectionLimits(),
     hops::Int = 3,
+    verbose_output::Bool=false,
 )
     in_branches, bus_neighbors =
         find_neighbor_lines(sys, interface_key, branch_filter, hops)
@@ -696,6 +697,104 @@ function find_interface_limits(
 
     interface_cap = DataFrame(:interface => inames, :sum_capacity => flow_lims)
     df = leftjoin(df, interface_cap, on = :interface)
+
+    if verbose_output
+        ### CODE FOR DEBUGGING TO OUTPUT MORE VARIABLES ###
+        
+        inj = vars["injection"]
+        flows = vars["flow"]
+        total_nom_load, ldfs = find_ldfs(sys, load_buses)
+
+        L_for = 1.0
+        L_rev= 1.0
+        if injection_limits.enforce_ldfs
+            L_for = value.(vars["load"]).data[1]
+            L_rev = value.(vars["load"]).data[2]
+        end
+
+        inj_df = DataFrame(
+            :bus => inj.axes[2],
+            :forward_inj => value.(inj[first(inj.axes[1]),:]).data,
+            :reverse_inj => value.(inj[last(inj.axes[1]),:]).data,
+        )
+
+        transform!(inj_df, :bus =>ByRow(b->get_name(get_area(get_bus(sys,b))))=> :area)
+
+        gen_and_load_buses = intersect(load_buses, gen_buses)
+
+        loads = filter(row -> row.bus ∈ get_name.(setdiff(load_buses, gen_and_load_buses)), inj_df)
+        gens = filter(row -> row.bus ∈ get_name.(setdiff(gen_buses, gen_and_load_buses)), inj_df)
+        genloads = filter(row -> row.bus ∈ get_name.(gen_and_load_buses), inj_df)
+
+        load_summary = DataFrame(
+            :Total_Nom_Load => [-total_nom_load],
+            :Total_Fwd_Load => [sum(loads.forward_inj) + sum(genloads[genloads.forward_inj .<0, :forward_inj])], #sum of all buses < 0
+            :Total_Rev_Load => [sum(loads.reverse_inj) + sum(genloads[genloads.reverse_inj .<0, :reverse_inj])],
+            :Total_Fwd_LoadBuses => [sum(loads.forward_inj) + sum(genloads.forward_inj)], #sum of all buses with loads
+            :Total_Rev_LoadBuses => [sum(loads.reverse_inj) + sum(genloads.reverse_inj)],
+            :L_fwd => [L_for],
+            :L_rev => [L_rev],
+
+        )
+        # Add original ldfs to loads
+        transform!(loads, :bus =>ByRow(x->ldfs[x]*load_summary.Total_Nom_Load[1])=> :nominal_load)
+        transform!(genloads, :bus =>ByRow(x->ldfs[x]*load_summary.Total_Nom_Load[1])=> :nominal_load)
+        loads[!, :MaxLoad] = loads.nominal_load .* injection_limits.loadbus_bounds[2]
+        loads[!, :MinLoad] = loads.nominal_load .* injection_limits.loadbus_bounds[1]
+        genloads[!, :MaxLoad] = genloads.nominal_load .* injection_limits.loadbus_bounds[2]
+        genloads[!, :MinLoad] = genloads.nominal_load .* injection_limits.loadbus_bounds[1]
+
+        if injection_limits.enforce_ldfs
+            transform!(loads, :bus =>ByRow(x->ldfs[x])=> :original_ldf)
+            transform!(genloads, :bus =>ByRow(x->ldfs[x])=> :original_ldf)
+            genloads[!, :Ldf_MaxLoad_Fwd] = genloads.original_ldf .* L_for
+            genloads[!, :Ldf_MaxLoad_Rev] = genloads.original_ldf .* L_rev
+
+            loads[!,:L_ldf_fwd] = loads.forward_inj ./ L_for #LDF using L variable to calculate
+            loads[!,:L_ldf_rev] = loads.reverse_inj ./ L_rev
+        end
+
+        # Add gen lims to gens
+        transform!(gens, :bus =>ByRow(b->sum(
+            get_max_active_power.(
+                get_components(
+                    x -> get_available(x) && get_name(get_bus(x)) == b,
+                    Generator,
+                    sys,
+                )
+            ),
+        ) * injection_limits.genbus_upper_bound)=> :gen_lims)
+
+        transform!(genloads, :bus =>ByRow(b->sum(
+            get_max_active_power.(
+                get_components(
+                    x -> get_available(x) && get_name(get_bus(x)) == b,
+                    Generator,
+                    sys,
+                )
+            ),
+        ) * injection_limits.genbus_upper_bound)=> :gen_lims)
+        if injection_limits.enforce_ldfs
+            genloads[!, :MaxGen_Fwd] = genloads.Ldf_MaxLoad_Fwd + genloads.gen_lims
+            genloads[!, :MaxGen_Rev] = genloads.Ldf_MaxLoad_Rev + genloads.gen_lims
+        else
+            genloads.MinLoad += genloads.gen_lims
+        end
+
+        ## Output Flows
+        flow_df = DataFrame(
+            :branch => flows.axes[2],
+            :forward_flow => value.(flows[first(flows.axes[1]),:]).data,
+            :reverse_flow => value.(flows[last(flows.axes[1]),:]).data,
+        )
+        # add to/from ratings and thermal capacity
+        transform!(flow_df, :branch =>ByRow(br->get_name(get_area(get_from(get_arc(get_component(ACBranch, sys, br))))))=> :from_area)
+        transform!(flow_df, :branch =>ByRow(br->get_name(get_area(get_to(get_arc(get_component(ACBranch, sys, br))))))=> :to_area)
+        transform!(flow_df, :branch =>ByRow(br->get_rate(get_component(ACBranch, sys, br)))=> :flow_limit)
+
+        ### END OF DEBUGGING CODE ###
+        return df, loads, gens, genloads, load_summary, flow_df 
+    end
     return df
 end
 end # module
