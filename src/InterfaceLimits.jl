@@ -549,7 +549,6 @@ Calculates the bi-directional interface transfer limits for each interface in a 
 - `solver::JuMP.MOI.OptimizerWithAttributes` : Solver
 - `interface_key::Pair{String, String}` :  key to select single interface (optional arg to run calculation for single interface)
 - `interface::Vector{ACBranch}` : vector of branches included in interface (optional arg to run calculation for single interface)
-- `interfaces::Dict{Pair{String, String}, Vector{ACBranch}}` : dict of all interfaces (optional arg to run calculation for single interface)
 
 # Keyword Arguments
 
@@ -557,8 +556,6 @@ Calculates the bi-directional interface transfer limits for each interface in a 
 - `ptdf::VirtualPTDF = VirtualPTDF(sys),` : power transfer distribution factor matrix
 - `security::Union{Bool, Security} = false` : enforce n-1 transmission security constraints
 - `injection_limits::InjectionLimits = InjectionLimits()` : constrain generation and load injections
-- `enforce_gen_limits::Bool = false` : enforce generator capacity limits defined by available generators in System
-- `enforce_load_distribution::Bool = false` : enforce constant load distribution factor constraints
 - `hops::Int = 3` : topological distance to include neighboring (outside of interface regions) transmission lines in interface transfer limit calculations
 
 # Examples
@@ -585,7 +582,7 @@ interface_lims = find_interface_limits(sys, solver, branch_filter = bf);
 interfaces = InterfaceLimits.find_interfaces(sys)
 interface_key = first(collect(keys(interfaces)))
 interface = interfaces[interface_key]
-interface_lims = find_interface_limits(sys, solver, interface_key, interface, interfaces);
+interface_lims = find_interface_limits(sys, solver, interface_key, interface);
 ```
 """
 
