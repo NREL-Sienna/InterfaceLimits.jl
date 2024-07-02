@@ -476,6 +476,9 @@ function add_constraints!(
             )
         end
 
+        # Power balance constraint
+        @constraint(m, sum(P[iname,:]) == 0.0)
+
         @constraint(
             m,
             I[iname] == 
