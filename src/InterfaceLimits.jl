@@ -354,15 +354,16 @@ function find_hvdc_buses(sys::System, bus_neighbors)
 end
 
 function get_hvdc_inj(b, iname, F, sys)
+    in_branches = F.axes[2]
     dc_brs_from = get_components( 
         x -> (
             get_from(get_arc(x)) == b
-        ),
+        ) && (get_name(x) in in_branches),
         TwoTerminalHVDCLine, sys)
     dc_brs_to = get_components( 
         x -> (
             get_to(get_arc(x)) == b
-        ),
+        ) && (get_name(x) in in_branches),
         TwoTerminalHVDCLine, sys)    
     hvdc_inj = 0.0
     length(dc_brs_from) > 0 && (hvdc_inj -= sum(F[iname,get_name.(dc_brs_from)]))
