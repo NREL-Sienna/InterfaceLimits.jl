@@ -324,7 +324,7 @@ function line_direction(br::ACBranch, ikey::Pair{String,String})
 end
 
 function get_flow_lims(br::ACBranch)
-    return (forward = get_rate(br), reverse = -1 * get_rate(br))
+    return (forward = get_rating(br), reverse = -1 * get_rating(br))
 end
 
 function get_flow_lims(br::TwoTerminalHVDCLine)
@@ -791,7 +791,7 @@ function find_interface_limits(
         # add to/from ratings and thermal capacity
         transform!(flow_df, :branch =>ByRow(br->get_name(get_area(get_from(get_arc(get_component(ACBranch, sys, br))))))=> :from_area)
         transform!(flow_df, :branch =>ByRow(br->get_name(get_area(get_to(get_arc(get_component(ACBranch, sys, br))))))=> :to_area)
-        transform!(flow_df, :branch =>ByRow(br->get_rate(get_component(ACBranch, sys, br)))=> :flow_limit)
+        transform!(flow_df, :branch =>ByRow(br->get_rating(get_component(ACBranch, sys, br)))=> :flow_limit)
 
         ### END OF DEBUGGING CODE ###
         return df, loads, gens, genloads, load_summary, flow_df 
